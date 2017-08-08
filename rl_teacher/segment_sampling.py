@@ -11,11 +11,6 @@ def _slice_path(path, segment_length, start_pos=0):
         for k, v in path.items()
         if k in ['obs', "actions", 'original_rewards', 'human_obs']}
 
-def create_segment_q_states(segment):
-    obs_Ds = segment["obs"]
-    act_Ds = segment["actions"]
-    return np.concatenate([obs_Ds, act_Ds], axis=1)
-
 def sample_segment_from_path(path, segment_length):
     """Returns a segment sampled from a random place in a path. Returns None if the path is too short"""
     path_length = len(path["obs"])
@@ -27,8 +22,6 @@ def sample_segment_from_path(path, segment_length):
     # Build segment
     segment = _slice_path(path, segment_length, start_pos)
 
-    # Add q_states
-    segment["q_states"] = create_segment_q_states(segment)
     return segment
 
 def random_action(env, ob):

@@ -2,10 +2,10 @@ import multiprocessing
 import os
 import os.path as osp
 import uuid
+from time import sleep
 
 import numpy as np
 
-from rl_teacher.envs import make_with_torque_removed
 from rl_teacher.video import write_segment_to_video, upload_to_gcs
 
 class SyntheticComparisonCollector(object):
@@ -36,9 +36,12 @@ class SyntheticComparisonCollector(object):
     def unlabeled_comparisons(self):
         return [comp for comp in self._comparisons if comp['label'] is None]
 
-    def label_unlabeled_comparisons(self):
+    def label_unlabeled_comparisons(self, goal=None, verbose=False):
+        # TODO: Handle "goal" parameter?
         for comp in self.unlabeled_comparisons:
             self._add_synthetic_label(comp)
+        if verbose:
+            print("%s synthetic labels generated... " % (len(self.labeled_comparisons)))
 
     @staticmethod
     def _add_synthetic_label(comparison):
@@ -49,22 +52,23 @@ class SyntheticComparisonCollector(object):
         # Mutate the comparison and give it the new label
         comparison['label'] = 0 if left_has_more_rew else 1
 
-def _write_and_upload_video(env_id, gcs_path, local_path, segment):
-    env = make_with_torque_removed(env_id)
+def _write_and_upload_video(env, gcs_path, local_path, segment):
     write_segment_to_video(segment, fname=local_path, env=env)
     upload_to_gcs(local_path, gcs_path)
 
 class HumanComparisonCollector():
-    def __init__(self, env_id, experiment_name):
+    def __init__(self, env, experiment_name):
         from human_feedback_api import Comparison
 
         self._comparisons = []
-        self.env_id = env_id
+        self.env = env
         self.experiment_name = experiment_name
         self._upload_workers = multiprocessing.Pool(4)
 
         if Comparison.objects.filter(experiment_name=experiment_name).count() > 0:
-            raise EnvironmentError("Existing experiment named %s! Pick a new experiment name." % experiment_name)
+            print('DELETING ALL ASSOCIATED WEB DATA FOR EXPERIMENT "%s"' % experiment_name)
+            Comparison.objects.filter(experiment_name=experiment_name).delete()
+            # raise EnvironmentError("Existing experiment named %s! Pick a new experiment name." % experiment_name)
 
     def convert_segment_to_media_url(self, comparison_uuid, side, segment):
         tmp_media_dir = '/tmp/rl_teacher_media'
@@ -72,7 +76,7 @@ class HumanComparisonCollector():
         local_path = osp.join(tmp_media_dir, media_id)
         gcs_bucket = os.environ.get('RL_TEACHER_GCS_BUCKET')
         gcs_path = osp.join(gcs_bucket, media_id)
-        self._upload_workers.apply_async(_write_and_upload_video, (self.env_id, gcs_path, local_path, segment))
+        self._upload_workers.apply_async(_write_and_upload_video, (self.env, gcs_path, local_path, segment))
 
         media_url = "https://storage.googleapis.com/%s/%s" % (gcs_bucket.lstrip("gs://"), media_id)
         return media_url
@@ -121,7 +125,7 @@ class HumanComparisonCollector():
     def unlabeled_comparisons(self):
         return [comp for comp in self._comparisons if comp['label'] is None]
 
-    def label_unlabeled_comparisons(self):
+    def label_unlabeled_comparisons(self, goal=None, verbose=False):
         from human_feedback_api import Comparison
 
         for comparison in self.unlabeled_comparisons:
@@ -132,4 +136,14 @@ class HumanComparisonCollector():
                 comparison['label'] = 1
             elif db_comp.response == 'tie' or db_comp.response == 'abstain':
                 comparison['label'] = 'equal'
-                # If we did not match, then there is no response yet, so we just wait
+            # If we did not match, then there is no response yet, so we just move on
+
+        if verbose and goal:
+            print("%s/%s comparisons labeled." % (len(self.labeled_comparisons), goal))
+        if goal and len(self.labeled_comparisons) < int(goal * 0.75):
+            if verbose:
+                print("Please add labels w/ the human-feedback-api. Sleeping...")
+            # Sleep for a while to give the human opportunity to label comparisons
+            sleep(5)
+            # Recurse until the human has labeled most of the pretraining comparisons
+            self.label_unlabeled_comparisons(goal, verbose)
