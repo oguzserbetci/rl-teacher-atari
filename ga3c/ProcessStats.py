@@ -78,6 +78,11 @@ class ProcessStats(Process):
                 rolling_frame_count += length
                 rolling_reward += reward
 
+                # COPYPASTA FROM Server.py TODO: Refactor!
+                step = min(self.episode_count.value, Config.ANNEALING_EPISODE_COUNT - 1)
+                beta_multiplier = (Config.BETA_END - Config.BETA_START) / Config.ANNEALING_EPISODE_COUNT
+                beta = Config.BETA_START + beta_multiplier * step
+
                 if results_q.full():
                     old_episode_time, old_reward, old_length = results_q.get()
                     rolling_frame_count -= old_length
@@ -95,11 +100,13 @@ class ProcessStats(Process):
                         '[Episode: %8d Score: %10.4f] '
                         '[RScore: %10.4f RPPS: %5d] '
                         '[PPS: %5d TPS: %5d] '
-                        '[NT: %2d NP: %2d NA: %2d]'
-                        % (int(time.time()-self.start_time),
+                        '[NT: %2d NP: %2d NA: %2d] '
+                        '[Beta: %5.4f] '
+                        % (int(time.time() - self.start_time),
                            self.episode_count.value, reward,
                            rolling_reward / results_q.qsize(),
                            rolling_frame_count / (datetime.now() - first_time).total_seconds(),
                            self.FPS(), self.TPS(),
-                           self.trainer_count.value, self.predictor_count.value, self.agent_count.value))
+                           self.trainer_count.value, self.predictor_count.value, self.agent_count.value,
+                           beta))
                     sys.stdout.flush()

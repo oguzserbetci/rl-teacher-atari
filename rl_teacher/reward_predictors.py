@@ -1,6 +1,5 @@
 import os
 import random
-from collections import deque
 from time import sleep
 
 import numpy as np
@@ -34,7 +33,6 @@ class ComparisonRewardPredictor(object):
         self.experiment_name = experiment_name
 
         # Set up some bookkeeping
-        self.recent_segments = deque(maxlen=200)  # Keep a queue of recently seen segments to pull new comparisons from
         self._frames_per_segment = clip_length * env.fps
         self._steps_since_last_training = 0
         self._steps_since_last_checkpoint = 0
@@ -155,13 +153,11 @@ class ComparisonRewardPredictor(object):
         # We may be in a new part of the environment, so we take new segments to build comparisons from
         segment = sample_segment_from_path(path, int(self._frames_per_segment))
         if segment:
-            self.recent_segments.append(segment)
+            self.comparison_collector.add_segment(segment)
 
         # If we need more comparisons, then we build them from our recent segments
         if len(self.comparison_collector) < self.label_schedule.n_desired_labels:
-            self.comparison_collector.add_segment_pair(
-                random.choice(self.recent_segments),
-                random.choice(self.recent_segments))
+            self.comparison_collector.invent_comparison()
 
         # Train our predictor every X steps
         if self._steps_since_last_training >= self._n_timesteps_per_predictor_training:
@@ -170,6 +166,7 @@ class ComparisonRewardPredictor(object):
 
         # Save our predictor every X steps
         if self._steps_since_last_checkpoint >= self._n_timesteps_per_checkpoint:
+            print("Saving reward model checkpoint!")
             self._num_checkpoints += 1
             self.saver.save(self.sess, self._checkpoint_filename())
             self._steps_since_last_checkpoint = 0
@@ -186,10 +183,13 @@ class ComparisonRewardPredictor(object):
 
         minibatch_size = min(64, len(self.comparison_collector.labeled_decisive_comparisons))
         labeled_comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
-        left_obs = np.asarray([comp['left']['obs'] for comp in labeled_comparisons])
-        left_acts = np.asarray([comp['left']['actions'] for comp in labeled_comparisons])
-        right_obs = np.asarray([comp['right']['obs'] for comp in labeled_comparisons])
-        right_acts = np.asarray([comp['right']['actions'] for comp in labeled_comparisons])
+        left_segs = [self.comparison_collector.get_segment(comp['left']) for comp in labeled_comparisons]
+        right_segs = [self.comparison_collector.get_segment(comp['right']) for comp in labeled_comparisons]
+
+        left_obs = np.asarray([left['obs'] for left in left_segs])
+        left_acts = np.asarray([left['actions'] for left in left_segs])
+        right_obs = np.asarray([right['obs'] for right in right_segs])
+        right_acts = np.asarray([right['actions'] for right in right_segs])
         labels = np.asarray([comp['label'] for comp in labeled_comparisons])
 
         with self.graph.as_default():

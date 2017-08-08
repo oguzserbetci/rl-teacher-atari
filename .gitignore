@@ -1,4 +1,6 @@
+# Teacher
 *.sqlite3
+segments/
 
 # GA3C
 checkpoints/
