@@ -37,11 +37,7 @@ def make_comparison_predictor(env, experiment_name, predictor_type, summary_writ
 
     if predictor_type == "synth":
         comparison_collector = SyntheticComparisonCollector()
-
     elif predictor_type == "human":
-        bucket = os.environ.get('RL_TEACHER_GCS_BUCKET')
-        assert bucket, "you must specify a RL_TEACHER_GCS_BUCKET environment variable"
-        assert bucket.startswith("gs://"), "env variable RL_TEACHER_GCS_BUCKET must start with gs://"
         comparison_collector = HumanComparisonCollector(env, experiment_name=experiment_name)
     else:
         raise ValueError("Bad value for --predictor: %s" % predictor_type)
@@ -81,6 +77,7 @@ def main():
     num_timesteps = int(args.num_timesteps)
 
     os.makedirs('checkpoints/reward_model', exist_ok=True)
+    os.makedirs('segments', exist_ok=True)
 
     # Make predictor
     if args.predictor == "rl":
@@ -90,20 +87,26 @@ def main():
         predictor = make_comparison_predictor(
             env, experiment_name, args.predictor, summary_writer, n_pretrain_labels, args.n_labels)
 
-        print("Starting random rollouts to generate pretraining segments. No learning will take place...")
-        pretrain_segments = segments_from_rand_rollout(
-            env_id, make_with_torque_removed, n_desired_segments=n_pretrain_labels * 2,
-            clip_length_in_seconds=CLIP_LENGTH, workers=args.workers)
-
-        # Label pretrain segments
-        for i in range(n_pretrain_labels):  # Turn our random segments into comparisons
-            predictor.comparison_collector.add_segment_pair(pretrain_segments[i], pretrain_segments[i + n_pretrain_labels])
-        predictor.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
-
         if args.restore:
             predictor.load_model_from_checkpoint()
             print("Reward model loaded from checkpoint!")
         else:
+            predictor.comparison_collector.clear_old_data()
+
+            print("Starting random rollouts to generate pretraining segments. No learning will take place...")
+            pretrain_segments = segments_from_rand_rollout(
+                env_id, make_with_torque_removed, n_desired_segments=n_pretrain_labels * 2,
+                clip_length_in_seconds=CLIP_LENGTH, workers=args.workers)
+
+            # Add segments to comparison collector
+            for seg in pretrain_segments:
+                predictor.comparison_collector.add_segment(seg)
+            # Turn our random segments into comparisons
+            for _ in range(n_pretrain_labels):
+                predictor.comparison_collector.invent_comparison()
+            # Label our comparisons
+            predictor.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
+
             # Pretrain predictor
             for i in range(args.pretrain_iters):
                 predictor.train_predictor()  # Train on pretraining labels

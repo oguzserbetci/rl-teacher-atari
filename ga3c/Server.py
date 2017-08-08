@@ -124,6 +124,7 @@ class Server:
 
             # Saving is async - even if we start saving at a given episode, we may save the model at a later episode
             if Config.SAVE_MODELS and self.stats.should_save_model.value > 0:
+                print("Saving GA3C model!")
                 self.save_model()
                 self.stats.should_save_model.value = 0
 
@@ -136,6 +137,7 @@ class Server:
                     rewards = self.reward_modifier.predict_reward(path)
 
                     if done:
+                        print("Beta: %s" % self.model.beta)
                         # TODO REFACTOR THE WHOLE CALLBACKS THING SO IT NO SUCK
                         self.reward_modifier.path_callback(path)
 
