@@ -137,7 +137,6 @@ class Server:
                     rewards = self.reward_modifier.predict_reward(path)
 
                     if done:
-                        print("Beta: %s" % self.model.beta)
                         # TODO REFACTOR THE WHOLE CALLBACKS THING SO IT NO SUCK
                         self.reward_modifier.path_callback(path)
 

@@ -64,6 +64,7 @@ def main():
     parser.add_argument('-t', '--num_timesteps', default=5e6, type=int)
     parser.add_argument('-a', '--agent', default="ga3c", type=str)
     parser.add_argument('-i', '--pretrain_iters', default=10000, type=int)
+    parser.add_argument('-b', '--starting_beta', default=0.1, type=float)
     parser.add_argument('-V', '--no_videos', action="store_true")
     parser.add_argument('-r', '--restore', action="store_true")
     args = parser.parse_args()
@@ -89,7 +90,7 @@ def main():
 
         if args.restore:
             predictor.load_model_from_checkpoint()
-            print("Reward model loaded from checkpoint!")
+            print("Model loaded from checkpoint!")
         else:
             predictor.comparison_collector.clear_old_data()
 
@@ -123,6 +124,8 @@ def main():
         Ga3cConfig.NETWORK_NAME = experiment_name
         Ga3cConfig.SAVE_FREQUENCY = 200
         Ga3cConfig.LOAD_CHECKPOINT = args.restore
+        Ga3cConfig.BETA_START = args.starting_beta
+        Ga3cConfig.BETA_END = args.starting_beta * 0.1
         Ga3cConfig.ATARI_GAME = env
         Ga3cConfig.AGENTS = args.workers
         Ga3cServer(predictor).main()
