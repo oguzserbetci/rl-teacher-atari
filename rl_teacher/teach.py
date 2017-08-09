@@ -123,13 +123,14 @@ def main():
 
     print("Starting joint training of predictor and agent")
     if args.agent == "ga3c":
+        Ga3cConfig.ATARI_GAME = env_id
+        Ga3cConfig.MAKE_ENV_FUNCTION = make_env
         Ga3cConfig.NETWORK_NAME = experiment_name
         Ga3cConfig.SAVE_FREQUENCY = 200
+        Ga3cConfig.AGENTS = args.workers
         Ga3cConfig.LOAD_CHECKPOINT = args.restore
         Ga3cConfig.BETA_START = args.starting_beta
         Ga3cConfig.BETA_END = args.starting_beta * 0.1
-        Ga3cConfig.ATARI_GAME = env
-        Ga3cConfig.AGENTS = args.workers
         Ga3cServer(predictor).main()
     elif args.agent == "parallel_trpo":
         train_parallel_trpo(

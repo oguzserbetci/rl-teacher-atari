@@ -25,10 +25,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import sys
-if sys.version_info >= (3,0):
-    from queue import Queue
-else:
-    from Queue import Queue
 
 import numpy as np
 import scipy.misc as misc
@@ -36,10 +32,15 @@ import scipy.misc as misc
 from ga3c.Config import Config
 from ga3c.GameManager import GameManager
 
+if sys.version_info >= (3, 0):
+    from queue import Queue
+else:
+    from Queue import Queue
+
 
 class Environment:
     def __init__(self):
-        self.game = GameManager(Config.ATARI_GAME, display=Config.PLAY_MODE)
+        self.game = GameManager(Config.ATARI_GAME, Config.MAKE_ENV_FUNCTION, display=Config.PLAY_MODE)
         self.atari = self.game.is_atari()
         self.nb_frames = Config.STACKED_FRAMES
         self.frame_q = Queue(maxsize=self.nb_frames)

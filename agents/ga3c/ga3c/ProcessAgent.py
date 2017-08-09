@@ -131,7 +131,7 @@ class ProcessAgent(Process):
                     path["actions"] += [e.action for e in new_experiences]
                     path["human_obs"] += [e.human_obs for e in new_experiences]
 
-                    #  TODO SPEED UP!! THIS IS SLOWING THINGS DOWN! BECAUSE IT'S OPERATING ON THE WHOLE PATH!
+                    #  TODO SPEED UP!! THIS IS SLOWING THINGS DOWN!
                     self.reward_modifier_q.put((self.id, done, path))
                     path["rewards"] = self.wait_q.get()
 
