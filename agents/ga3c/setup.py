@@ -7,19 +7,9 @@ if sys.version_info.major != 3:
           "Python {}. The installation will likely fail.".format(sys.version_info.major))
 
 setup(
-    name='rl_teacher',
+    name='ga3c',
     version='0.0.1',
-    install_requires=[
-        'mujoco-py ~=0.5.7',
-        'gym[mujoco]',
-        'mujoco-py',
-        'tqdm',
-        'matplotlib',
-        'ipython',
-        'scipy',
-        'ipdb',
-        'keras',
-    ],
+    install_requires=[],
     # https://github.com/tensorflow/tensorflow/issues/7166#issuecomment-280881808
     extras_require={
         "tf": ["tensorflow ~= 1.2"],
