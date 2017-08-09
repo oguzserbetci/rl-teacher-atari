@@ -12,7 +12,7 @@ from ga3c.Config import Config as Ga3cConfig
 from rl_teacher.reward_predictors import TraditionalRLRewardPredictor, ComparisonRewardPredictor
 from rl_teacher.comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
 from rl_teacher.envs import get_timesteps_per_episode
-from rl_teacher.envs import make_with_torque_removed
+from rl_teacher.envs import make_env
 from rl_teacher.label_schedules import LabelAnnealer, ConstantLabelSchedule
 from rl_teacher.video import SegmentVideoRecorder
 from rl_teacher.segment_sampling import segments_from_rand_rollout
@@ -55,7 +55,7 @@ def pretrain_predictor(predictor, env_id, n_pretrain_labels, n_pretrain_iters, c
 
     print("Starting random rollouts to generate pretraining segments. No learning will take place...")
     pretrain_segments = segments_from_rand_rollout(
-        env_id, make_with_torque_removed, n_desired_segments=n_pretrain_labels * 2,
+        env_id, make_env, n_desired_segments=n_pretrain_labels * 2,
         clip_length_in_seconds=clip_length, workers=args.workers)
 
     # Add segments to comparison collector
@@ -96,7 +96,7 @@ def main():
     experiment_name = slugify(args.name)
     run_name = "%s/%s-%s" % (env_id, experiment_name, int(time()))
     summary_writer = make_summary_writer(run_name)
-    env = make_with_torque_removed(env_id)
+    env = make_env(env_id)
     num_timesteps = int(args.num_timesteps)
 
     os.makedirs('checkpoints/reward_model', exist_ok=True)
@@ -134,7 +134,7 @@ def main():
     elif args.agent == "parallel_trpo":
         train_parallel_trpo(
             env_id=env_id,
-            make_env=make_with_torque_removed,
+            make_env=make_env,
             predictor=predictor,
             summary_writer=summary_writer,
             workers=args.workers,
@@ -145,10 +145,7 @@ def main():
             seed=args.seed,
         )
     elif args.agent == "pposgd_mpi":
-        def make_env():
-            return make_with_torque_removed(env_id)
-
-        train_pposgd_mpi(make_env, num_timesteps=num_timesteps, seed=args.seed, predictor=predictor)
+        train_pposgd_mpi(lambda: make_env(env_id), num_timesteps=num_timesteps, seed=args.seed, predictor=predictor)
     else:
         raise ValueError("%s is not a valid choice for args.agent" % args.agent)
 

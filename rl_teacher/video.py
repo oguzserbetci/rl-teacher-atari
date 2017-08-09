@@ -7,26 +7,13 @@ import subprocess
 import numpy as np
 from gym import error
 
-class SegmentVideoRecorder(object):
-    def __init__(self, predictor, env, save_dir, checkpoint_interval=500):
-        self.predictor = predictor
-        self.env = env
-        self.checkpoint_interval = checkpoint_interval
-        self.save_dir = save_dir
+def upload_to_gcs(local_path, gcs_path):
+    assert osp.isfile(local_path), "%s must be a file" % local_path
+    assert gcs_path.startswith("gs://"), "%s must start with gs://" % gcs_path
 
-        self._num_paths_seen = 0  # Internal counter of how many paths we've seen
-
-    def path_callback(self, path):
-        if self._num_paths_seen % self.checkpoint_interval == 0:  # and self._num_paths_seen != 0:
-            fname = '%s/run_%s.mp4' % (self.save_dir, self._num_paths_seen)
-            print("Saving video of run %s to %s" % (self._num_paths_seen, fname))
-            write_segment_to_video(path, fname, self.env)
-        self._num_paths_seen += 1
-
-        self.predictor.path_callback(path)
-
-    def predict_reward(self, path):
-        return self.predictor.predict_reward(path)
+    # print("Copying media to %s in a background process" % gcs_path)
+    # Use DEVNULL to mute output.
+    subprocess.check_call(['gsutil', 'cp', local_path, gcs_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def write_segment_to_video(segment, fname, env):
     os.makedirs(osp.dirname(fname), exist_ok=True)
@@ -56,7 +43,32 @@ def export_video(frames, fname, fps=10):
             encoder.capture_frame(frame)
     encoder.close()
 
+class SegmentVideoRecorder(object):
+    """ Wraps a reward predictor's path_callback to regularly save a video to disk every so often. """
+
+    def __init__(self, predictor, env, save_dir, checkpoint_interval=500):
+        self.predictor = predictor
+        self.env = env
+        self.checkpoint_interval = checkpoint_interval
+        self.save_dir = save_dir
+
+        self._num_paths_seen = 0  # Internal counter of how many paths we've seen
+
+    def path_callback(self, path):
+        if self._num_paths_seen % self.checkpoint_interval == 0:  # and self._num_paths_seen != 0:
+            fname = '%s/run_%s.mp4' % (self.save_dir, self._num_paths_seen)
+            print("Saving video of run %s to %s" % (self._num_paths_seen, fname))
+            write_segment_to_video(path, fname, self.env)
+        self._num_paths_seen += 1
+
+        self.predictor.path_callback(path)
+
+    def predict_reward(self, path):
+        return self.predictor.predict_reward(path)
+
 class ImageEncoder(object):
+    """ Wrapper around a video encoding, command-line utility. """
+
     def __init__(self, output_path, frame_shape, frames_per_sec):
         self.proc = None
         self.output_path = output_path
@@ -135,11 +147,3 @@ class ImageEncoder(object):
         ret = self.proc.wait()
         if ret != 0:
             raise Exception("VideoRecorder encoder exited with status {}".format(ret))
-
-def upload_to_gcs(local_path, gcs_path):
-    assert osp.isfile(local_path), "%s must be a file" % local_path
-    assert gcs_path.startswith("gs://"), "%s must start with gs://" % gcs_path
-
-    # print("Copying media to %s in a background process" % gcs_path)
-    # Use DEVNULL to mute output.
-    subprocess.check_call(['gsutil', 'cp', local_path, gcs_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

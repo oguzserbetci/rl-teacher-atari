@@ -57,7 +57,9 @@ class SyntheticComparisonCollector(object):
         return [comp for comp in self._comparisons if comp['label'] is None]
 
     def label_unlabeled_comparisons(self, goal=None, verbose=False):
-        # TODO: Handle "goal" parameter?
+        if goal:
+            while len(self) < goal:
+                self.invent_comparison()
         for comp in self.unlabeled_comparisons:
             self._add_synthetic_label(comp)
         if verbose:

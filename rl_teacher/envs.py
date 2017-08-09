@@ -5,6 +5,48 @@ import numpy as np
 import scipy.misc as misc
 from gym.wrappers.time_limit import TimeLimit
 
+def make_env(env_id):
+    original_name = env_id
+    short = False
+    if '-v' in env_id:
+        env_id = env_id[:env_id.index('-v')].lower()
+    if env_id.startswith('short'):
+        env_id = env_id[len('short'):]
+        short = True
+    # Use our task_by_name function to get the env
+    return task_by_name(env_id, original_name, short)
+
+def task_by_name(name, original_name=None, short=False):
+    if name == "reacher":
+        return reacher(short=short)
+    elif name == "humanoid":
+        return humanoid()
+    elif name == "hopper":
+        return hopper(short=short)
+    elif name in ["walker"]:
+        return walker(short=short)
+    elif name == "swimmer":
+        return swimmer()
+    elif name == "ant":
+        return ant()
+    elif name in ["cheetah", "halfcheetah"]:
+        return cheetah(short=short)
+    elif name in ["pendulum"]:
+        return pendulum()
+    elif name in ["doublependulum"]:
+        return double_pendulum()
+    else:
+        try:
+            # If an original_name is provided, try to make an environment from that.
+            # See "make_env"
+            env = gym.make(original_name)
+            env = CompressedPixelViewer(env)
+            env = PixelEnvViewer(env, flip=True, fps=30)
+            env = limit(t=500, env=env)
+            return env
+        except Exception:
+            raise ValueError(name)
+
 class TransparentWrapper(gym.Wrapper):
     """Passes missing attributes through the wrapper stack"""
 
@@ -120,48 +162,6 @@ class TimeLimitTransparent(TimeLimit, TransparentWrapper):
 
 def limit(env, t):
     return TimeLimitTransparent(env, max_episode_steps=t)
-
-def task_by_name(name, original_name=None, short=False):
-    if name == "reacher":
-        return reacher(short=short)
-    elif name == "humanoid":
-        return humanoid()
-    elif name == "hopper":
-        return hopper(short=short)
-    elif name in ["walker"]:
-        return walker(short=short)
-    elif name == "swimmer":
-        return swimmer()
-    elif name == "ant":
-        return ant()
-    elif name in ["cheetah", "halfcheetah"]:
-        return cheetah(short=short)
-    elif name in ["pendulum"]:
-        return pendulum()
-    elif name in ["doublependulum"]:
-        return double_pendulum()
-    else:
-        try:
-            # If an original_name is provided, try to make an environment from that.
-            # See "make_with_torque_removed"
-            env = gym.make(original_name)
-            env = CompressedPixelViewer(env)
-            env = PixelEnvViewer(env, flip=True, fps=30)
-            env = limit(t=500, env=env)
-            return env
-        except Exception:
-            raise ValueError(name)
-
-def make_with_torque_removed(env_id):
-    original_name = env_id
-    short = False
-    if '-v' in env_id:
-        env_id = env_id[:env_id.index('-v')].lower()
-    if env_id.startswith('short'):
-        env_id = env_id[len('short'):]
-        short = True
-    # Use our task_by_name function to get the env
-    return task_by_name(env_id, original_name, short)
 
 def get_timesteps_per_episode(env):
     if hasattr(env, "_max_episode_steps"):
