@@ -17,12 +17,10 @@ from rl_teacher.label_schedules import LabelAnnealer, ConstantLabelSchedule
 from rl_teacher.video import SegmentVideoRecorder
 from rl_teacher.segment_sampling import segments_from_rand_rollout
 from rl_teacher.summaries import AgentLogger, make_summary_writer
-from rl_teacher.utils import slugify, corrcoef
+from rl_teacher.utils import slugify
 
-# TODO: Parameterize this.
-CLIP_LENGTH = 1.5
-
-def make_comparison_predictor(env, experiment_name, predictor_type, summary_writer, n_pretrain_labels, n_labels=None):
+def make_comparison_predictor(env, experiment_name, predictor_type, summary_writer,
+                              clip_length, n_pretrain_labels, n_labels=None):
     agent_logger = AgentLogger(summary_writer)
 
     if n_labels:
@@ -49,8 +47,31 @@ def make_comparison_predictor(env, experiment_name, predictor_type, summary_writ
         comparison_collector=comparison_collector,
         agent_logger=agent_logger,
         label_schedule=label_schedule,
-        clip_length=CLIP_LENGTH
+        clip_length=clip_length
     )
+
+def pretrain_predictor(predictor, env_id, n_pretrain_labels, n_pretrain_iters, clip_length, workers):
+    predictor.comparison_collector.clear_old_data()
+
+    print("Starting random rollouts to generate pretraining segments. No learning will take place...")
+    pretrain_segments = segments_from_rand_rollout(
+        env_id, make_with_torque_removed, n_desired_segments=n_pretrain_labels * 2,
+        clip_length_in_seconds=clip_length, workers=args.workers)
+
+    # Add segments to comparison collector
+    for seg in pretrain_segments:
+        predictor.comparison_collector.add_segment(seg)
+    # Turn our random segments into comparisons
+    for _ in range(n_pretrain_labels):
+        predictor.comparison_collector.invent_comparison()
+    # Label our comparisons
+    predictor.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
+
+    # Pretrain predictor
+    for i in range(n_pretrain_iters):
+        predictor.train_predictor()  # Train on pretraining labels
+        if i % 25 == 0:
+            print("%s/%s predictor pretraining iters... " % (i, n_pretrain_iters))
 
 def main():
     parser = argparse.ArgumentParser()
@@ -65,8 +86,9 @@ def main():
     parser.add_argument('-a', '--agent', default="ga3c", type=str)
     parser.add_argument('-i', '--pretrain_iters', default=10000, type=int)
     parser.add_argument('-b', '--starting_beta', default=0.1, type=float)
+    parser.add_argument('-c', '--clip_length', default=1.5, type=float)
     parser.add_argument('-V', '--no_videos', action="store_true")
-    parser.add_argument('-r', '--restore', action="store_true")
+    parser.add_argument('-R', '--restore', action="store_true")
     args = parser.parse_args()
 
     print("Setting things up...")
@@ -86,33 +108,13 @@ def main():
     else:
         n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
         predictor = make_comparison_predictor(
-            env, experiment_name, args.predictor, summary_writer, n_pretrain_labels, args.n_labels)
+            env, experiment_name, args.predictor, summary_writer, args.clip_length, n_pretrain_labels, args.n_labels)
 
         if args.restore:
             predictor.load_model_from_checkpoint()
             print("Model loaded from checkpoint!")
         else:
-            predictor.comparison_collector.clear_old_data()
-
-            print("Starting random rollouts to generate pretraining segments. No learning will take place...")
-            pretrain_segments = segments_from_rand_rollout(
-                env_id, make_with_torque_removed, n_desired_segments=n_pretrain_labels * 2,
-                clip_length_in_seconds=CLIP_LENGTH, workers=args.workers)
-
-            # Add segments to comparison collector
-            for seg in pretrain_segments:
-                predictor.comparison_collector.add_segment(seg)
-            # Turn our random segments into comparisons
-            for _ in range(n_pretrain_labels):
-                predictor.comparison_collector.invent_comparison()
-            # Label our comparisons
-            predictor.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
-
-            # Pretrain predictor
-            for i in range(args.pretrain_iters):
-                predictor.train_predictor()  # Train on pretraining labels
-                if i % 25 == 0:
-                    print("%s/%s predictor pretraining iters... " % (i, args.pretrain_iters))
+            pretrain_predictor(predictor, env_id, n_pretrain_labels, args.pretrain_iters, args.clip_length, args.workers)
 
     # Wrap the predictor to capture videos every so often:
     if not args.no_videos:
