@@ -1,3 +1,4 @@
+import random
 from copy import copy
 
 import gym
@@ -40,6 +41,16 @@ def task_by_name(name, original_name=None, short=False):
             # If an original_name is provided, try to make an environment from that.
             # See "make_env"
             env = gym.make(original_name)
+
+            if name == "montezumarevenge":  # Because of shenanegans with the TimeLimit wrapper we have to do this one first.
+                nav_to_start_commands = [
+                    # Basic start:
+                    [],
+                    # Start at the base of the ladder in the bottom right of starting room:
+                    [11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11,
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]]
+                env = RandomStartPoint(env, nav_to_start_commands)
+
             env = CompressedPixelViewer(env)
             env = PixelEnvViewer(env, flip=True, fps=30)
             env = limit(t=500, env=env)
@@ -129,6 +140,25 @@ class CompressedPixelViewer(TransparentWrapper):
         ob, reward, done, info = self.env._step(a)
         ob = self._preprocess(ob)
         return ob, reward, done, info
+
+class RandomStartPoint(TransparentWrapper):
+    def __init__(self, env, nav_to_start_commands):
+        super().__init__(env)
+        self._reset_options = [self._build_reset_option(nav_to_start)
+                               for nav_to_start in nav_to_start_commands]
+
+    def _build_reset_option(self, nav_to_start):
+        """ Takes a list of instructions and returns a saved environment state. """
+        self.env._reset()
+        for command in nav_to_start:
+            self.env.step(command)
+        return self.env.env.clone_state()  # We need to call env.env to get at the core Atari environment. :\
+
+    def reset(self):
+        ref = self.env.env.ale.decodeState(random.choice(self._reset_options))
+        self.env.env.ale.restoreState(ref)
+        ob, _, _, _ = self.env.step(0)  # Kick it off with a NULLOP
+        return ob
 
 class UseReward(TransparentWrapper):
     """Use a reward other than the normal one for an environment.
