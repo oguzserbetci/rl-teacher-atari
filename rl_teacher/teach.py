@@ -56,7 +56,7 @@ def pretrain_predictor(predictor, env_id, n_pretrain_labels, n_pretrain_iters, c
     print("Starting random rollouts to generate pretraining segments. No learning will take place...")
     pretrain_segments = segments_from_rand_rollout(
         env_id, make_env, n_desired_segments=n_pretrain_labels * 2,
-        clip_length_in_seconds=clip_length, workers=args.workers)
+        clip_length_in_seconds=clip_length, workers=workers)
 
     # Add segments to comparison collector
     for seg in pretrain_segments:

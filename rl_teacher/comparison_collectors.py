@@ -86,7 +86,7 @@ class HumanComparisonCollector(object):
 
         self._comparisons = []
         self._segments = {}
-        self._max_segment_id = 0
+        self._max_segment_id = 0  # Initialized later in the function. Included here because it's a member var.
         self.env = env
         self.experiment_name = experiment_name
         self._upload_workers = multiprocessing.Pool(workers)
@@ -105,14 +105,17 @@ class HumanComparisonCollector(object):
                 "label": None
             })
         # Load segments from disk
-        self._max_segment_id = max(segment_ids)
+        self._max_segment_id = max(segment_ids) if segment_ids else 0
         for seg_id in range(1, self._max_segment_id + 1):
             self._segments[seg_id] = pickle.load(open(self._pickle_path(seg_id), 'rb'))
         # Apply labels
         self.label_unlabeled_comparisons()
         # Report
-        print("Found %s old comparisons (%s labeled) of %s segments (max(id)=%s) from a previous run!" % (
-            len(self._comparisons), len(self.labeled_decisive_comparisons), len(self._segments), self._max_segment_id))
+        if len(self._segments) < 1:
+            print("Starting fresh!")
+        else:
+            print("Found %s old comparisons (%s labeled) of %s segments (max(id)=%s) from a previous run!" % (
+                len(self._comparisons), len(self.labeled_decisive_comparisons), len(self._segments), self._max_segment_id))
 
     def get_segment(self, index):
         return self._segments[index]
@@ -169,8 +172,8 @@ class HumanComparisonCollector(object):
 
     def invent_comparison(self):
         # TODO: Make this intelligent!
-        left_seg_id = random.choice(self._segments.keys())
-        right_seg_id = random.choice(self._segments.keys())
+        left_seg_id = random.choice(list(self._segments.keys()))  # Needs to be a list so it can be indexed.
+        right_seg_id = random.choice(list(self._segments.keys()))
         comparison_id = self._create_comparison_in_webapp(left_seg_id, right_seg_id)
         self._comparisons.append({
             "left": left_seg_id,
