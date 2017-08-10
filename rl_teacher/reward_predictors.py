@@ -182,15 +182,15 @@ class ComparisonRewardPredictor(object):
         self.comparison_collector.label_unlabeled_comparisons()
 
         minibatch_size = min(64, len(self.comparison_collector.labeled_decisive_comparisons))
-        labeled_comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
-        left_segs = [self.comparison_collector.get_segment(comp['left']) for comp in labeled_comparisons]
-        right_segs = [self.comparison_collector.get_segment(comp['right']) for comp in labeled_comparisons]
+        comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
+        left_segs = [self.comparison_collector.get_segment(comp['left']) for comp in comparisons]
+        right_segs = [self.comparison_collector.get_segment(comp['right']) for comp in comparisons]
 
         left_obs = np.asarray([left['obs'] for left in left_segs])
         left_acts = np.asarray([left['actions'] for left in left_segs])
         right_obs = np.asarray([right['obs'] for right in right_segs])
         right_acts = np.asarray([right['actions'] for right in right_segs])
-        labels = np.asarray([comp['label'] for comp in labeled_comparisons])
+        labels = np.asarray([comp['label'] for comp in comparisons])
 
         with self.graph.as_default():
             _, loss = self.sess.run([self.train_op, self.loss_op], feed_dict={
