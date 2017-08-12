@@ -15,13 +15,13 @@ def upload_to_gcs(local_path, gcs_path):
     # Use DEVNULL to mute output.
     subprocess.check_call(['gsutil', 'cp', local_path, gcs_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-def write_segment_to_video(segment, fname, env):
+def write_segment_to_video(segment, fname, render_full_obs, fps):
     os.makedirs(osp.dirname(fname), exist_ok=True)
-    frames = [env.render_full_obs(x) for x in segment["human_obs"]]
+    frames = [render_full_obs(x) for x in segment["human_obs"]]
     # Draw out the last frame by 0.2s
-    for i in range(int(env.fps * 0.2)):
+    for i in range(int(fps * 0.2)):
         frames.append(frames[-1])
-    export_video(frames, fname, fps=env.fps)
+    export_video(frames, fname, fps=fps)
 
 def export_video(frames, fname, fps=10):
     assert "mp4" in fname, "Name requires .mp4 suffix"
@@ -58,7 +58,7 @@ class SegmentVideoRecorder(object):
         if self._num_paths_seen % self.checkpoint_interval == 0:  # and self._num_paths_seen != 0:
             fname = '%s/run_%s.mp4' % (self.save_dir, self._num_paths_seen)
             print("Saving video of run %s to %s" % (self._num_paths_seen, fname))
-            write_segment_to_video(path, fname, self.env)
+            write_segment_to_video(path, fname, self.env.render_full_obs, self.env.fps)
         self._num_paths_seen += 1
 
         self.predictor.path_callback(path)

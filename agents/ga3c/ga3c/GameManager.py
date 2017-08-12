@@ -33,6 +33,7 @@ class GameManager:
         self.reset()
 
     def is_atari(self):
+        # Returns false if the space has already been compressed.
         return self.env.observation_space.shape == (210, 160, 3)
 
     def reset(self):

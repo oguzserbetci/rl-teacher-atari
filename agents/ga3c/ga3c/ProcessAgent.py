@@ -47,6 +47,7 @@ class ProcessAgent(Process):
 
         self.env = Environment()
         self.num_actions = self.env.get_num_actions()
+        self.onehots = np.eye(self.num_actions)
         self.actions = np.arange(self.num_actions)
 
         self.discount_factor = Config.DISCOUNT
@@ -65,7 +66,7 @@ class ProcessAgent(Process):
 
     def convert_data(self, experiences):
         x_ = np.array([exp.state for exp in experiences])
-        a_ = np.eye(self.num_actions)[np.array([exp.action for exp in experiences])].astype(np.float32)
+        a_ = self.onehots[np.array([exp.action for exp in experiences], dtype=int)].astype(np.float32)
         r_ = np.array([exp.reward for exp in experiences])
         return x_, r_, a_
 
@@ -124,9 +125,8 @@ class ProcessAgent(Process):
                         new_experiences = experiences[1:]
                     else:
                         new_experiences = experiences
-                    # Ironically we actually want to use the human_obs here
-                    # because GA3C uses a 4-frame stack while Teacher learns off only one frame
-                    path["obs"] += [e.human_obs for e in new_experiences]
+
+                    path["obs"] += [e.state for e in new_experiences]
                     path["original_rewards"] += [e.reward for e in new_experiences]
                     path["actions"] += [e.action for e in new_experiences]
                     path["human_obs"] += [e.human_obs for e in new_experiences]

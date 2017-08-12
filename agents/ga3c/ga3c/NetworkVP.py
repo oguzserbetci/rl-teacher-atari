@@ -51,12 +51,15 @@ class NetworkVP:
             with tf.device(self.device):
                 self._create_graph()
 
+                config = tf.ConfigProto(
+                    allow_soft_placement=True,
+                    log_device_placement=False,
+                    gpu_options=tf.GPUOptions(allow_growth=True))
+                # config.gpu_options.per_process_gpu_memory_fraction = 0.6
+
                 self.sess = tf.Session(
                     graph=self.graph,
-                    config=tf.ConfigProto(
-                        allow_soft_placement=True,
-                        log_device_placement=False,
-                        gpu_options=tf.GPUOptions(allow_growth=True)))
+                    config=config)
                 self.sess.run(tf.global_variables_initializer())
 
                 if Config.TENSORBOARD:

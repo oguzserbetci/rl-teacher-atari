@@ -10,16 +10,18 @@ import numpy as np
 
 from rl_teacher.video import write_segment_to_video, upload_to_gcs
 
-def _write_and_upload_video(segment, env, gcs_path, video_local_path, segment_local_path):
+def _write_and_upload_video(segment, render_full_obs, fps, gcs_path, video_local_path, segment_local_path):
     try:
         with open(segment_local_path, 'wb') as f:
             pickle.dump(segment, f)  # Write seg to disk
-        write_segment_to_video(segment, fname=video_local_path, env=env)
+        write_segment_to_video(segment, fname=video_local_path, render_full_obs=render_full_obs, fps=fps)
         upload_to_gcs(video_local_path, gcs_path)
     except Exception:
         # Exceptions in Pool workers don't bubble up until .get() is called.
         # But _write_and_upload_video is fire-and-forget, so we need to yell if there's a problem.
         traceback.print_exc()
+
+# TODO: Create ComparisonCollector parent class!
 
 class SyntheticComparisonCollector(object):
     def __init__(self):
@@ -121,6 +123,12 @@ class HumanComparisonCollector(object):
         return self._segments[index]
 
     def clear_old_data(self):
+        if len(self._segments > 0):
+            print("Erasing old comparison and segment data.")
+
+        for seg_id in self._segments():
+            os.remove(self._pickle_path(seg_id))
+
         self._comparisons = []
         self._segments = {}
         self._max_segment_id = 0
@@ -168,7 +176,7 @@ class HumanComparisonCollector(object):
         self._segments[seg_id] = seg
         # Write the segment to disk and upload
         self._upload_workers.apply_async(_write_and_upload_video, (
-            seg, self.env, self._gcs_path(seg_id), self._video_path(seg_id), self._pickle_path(seg_id)))
+            seg, self.env.render_full_obs, self.env.fps, self._gcs_path(seg_id), self._video_path(seg_id), self._pickle_path(seg_id)))
 
     def invent_comparison(self):
         # TODO: Make this intelligent!

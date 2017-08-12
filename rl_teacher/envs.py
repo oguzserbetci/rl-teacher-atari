@@ -42,7 +42,7 @@ def task_by_name(name, original_name=None, short=False):
             # See "make_env"
             env = gym.make(original_name)
 
-            if name == "montezumarevenge":  # Because of shenanegans with the TimeLimit wrapper we have to do this one first.
+            if name == "montezumarevenge":
                 nav_to_start_commands = [
                     # Basic start:
                     [],
@@ -50,6 +50,7 @@ def task_by_name(name, original_name=None, short=False):
                     [11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11,
                      0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]]
                 env = RandomStartPoint(env, nav_to_start_commands)
+                env = DoneOnLivesBelowThreshold(env, 5)
 
             env = CompressedPixelViewer(env)
             env = PixelEnvViewer(env, flip=True, fps=30)
@@ -67,7 +68,12 @@ class TransparentWrapper(gym.Wrapper):
             return getattr(parent, attr)
         if hasattr(self.env, attr):
             return getattr(self.env, attr)
-        raise AttributeError(attr)
+        # HACK: Gym wraps environments with a TimeLimit wrapper sometimes, hiding the the ArcadeLearningEnvironment (ALE).
+        # We want to reach past the wrapper to get it. (clone_state is a helper function for the ALE. See atari_env.py in gym.)
+        if (attr in ['ale', 'clone_state']) \
+                and hasattr(self.env, 'env') and self.env is not None and hasattr(self.env.env, attr):
+            return getattr(self.env.env, attr)
+        raise AttributeError(type(self), attr)
 
 class MjViewer(TransparentWrapper):
     """Adds a space-efficient human_obs to info that allows rendering videos subsequently"""
@@ -152,13 +158,22 @@ class RandomStartPoint(TransparentWrapper):
         self.env._reset()
         for command in nav_to_start:
             self.env.step(command)
-        return self.env.env.clone_state()  # We need to call env.env to get at the core Atari environment. :\
+        return self.clone_state()  # We need to call env.env to get at the core Atari environment. :\
 
-    def reset(self):
-        ref = self.env.env.ale.decodeState(random.choice(self._reset_options))
-        self.env.env.ale.restoreState(ref)
+    def _reset(self):
+        ref = self.ale.decodeState(random.choice(self._reset_options))
+        self.ale.restoreState(ref)
         ob, _, _, _ = self.env.step(0)  # Kick it off with a NULLOP
         return ob
+
+class DoneOnLivesBelowThreshold(TransparentWrapper):
+    def __init__(self, env, threshold):
+        super().__init__(env)
+        self.threshold = threshold
+
+    def _step(self, a):
+        ob, reward, done, info = super()._step(a)
+        return ob, reward, done or self.ale.lives() < self.threshold, info
 
 class UseReward(TransparentWrapper):
     """Use a reward other than the normal one for an environment.

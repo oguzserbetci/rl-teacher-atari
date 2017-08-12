@@ -20,7 +20,7 @@ from rl_teacher.summaries import AgentLogger, make_summary_writer
 from rl_teacher.utils import slugify
 
 def make_comparison_predictor(env, experiment_name, predictor_type, summary_writer,
-                              clip_length, n_pretrain_labels, n_labels=None):
+                              clip_length, stacked_frames, n_pretrain_labels, n_labels=None):
     agent_logger = AgentLogger(summary_writer)
 
     if n_labels:
@@ -47,16 +47,15 @@ def make_comparison_predictor(env, experiment_name, predictor_type, summary_writ
         comparison_collector=comparison_collector,
         agent_logger=agent_logger,
         label_schedule=label_schedule,
-        clip_length=clip_length
+        clip_length=clip_length,
+        stacked_frames=stacked_frames
     )
 
-def pretrain_predictor(predictor, env_id, n_pretrain_labels, n_pretrain_iters, clip_length, workers):
-    predictor.comparison_collector.clear_old_data()
-
+def generate_random_pretraining_data(predictor, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
     print("Starting random rollouts to generate pretraining segments. No learning will take place...")
     pretrain_segments = segments_from_rand_rollout(
         env_id, make_env, n_desired_segments=n_pretrain_labels * 2,
-        clip_length_in_seconds=clip_length, workers=workers)
+        clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
 
     # Add segments to comparison collector
     for seg in pretrain_segments:
@@ -67,8 +66,9 @@ def pretrain_predictor(predictor, env_id, n_pretrain_labels, n_pretrain_iters, c
     # Label our comparisons
     predictor.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
 
-    # Pretrain predictor
-    for i in range(n_pretrain_iters):
+def pretrain_predictor(predictor, n_pretrain_iters):
+    print("Starting pretraining...")
+    for i in range(1, n_pretrain_iters + 1):
         predictor.train_predictor()  # Train on pretraining labels
         if i % 25 == 0:
             print("%s/%s predictor pretraining iters... " % (i, n_pretrain_iters))
@@ -87,8 +87,10 @@ def main():
     parser.add_argument('-i', '--pretrain_iters', default=10000, type=int)
     parser.add_argument('-b', '--starting_beta', default=0.1, type=float)
     parser.add_argument('-c', '--clip_length', default=1.5, type=float)
+    parser.add_argument('-f', '--stacked_frames', default=4, type=int)
     parser.add_argument('-V', '--no_videos', action="store_true")
     parser.add_argument('-R', '--restore', action="store_true")
+    parser.add_argument('-r', '--soft_restore', action="store_true")
     args = parser.parse_args()
 
     print("Setting things up...")
@@ -108,13 +110,20 @@ def main():
     else:
         n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
         predictor = make_comparison_predictor(
-            env, experiment_name, args.predictor, summary_writer, args.clip_length, n_pretrain_labels, args.n_labels)
+            env, experiment_name, args.predictor, summary_writer,
+            args.clip_length, args.stacked_frames, n_pretrain_labels, args.n_labels)
 
         if args.restore:
             predictor.load_model_from_checkpoint()
             print("Model loaded from checkpoint!")
+        elif args.soft_restore:
+            # Assume that the relevant segments are already loaded
+            pretrain_predictor(predictor, args.pretrain_iters)
         else:
-            pretrain_predictor(predictor, env_id, n_pretrain_labels, args.pretrain_iters, args.clip_length, args.workers)
+            predictor.comparison_collector.clear_old_data()
+            generate_random_pretraining_data(
+                predictor, env_id, n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
+            pretrain_predictor(predictor, args.pretrain_iters)
 
     # Wrap the predictor to capture videos every so often:
     if not args.no_videos:
@@ -129,6 +138,7 @@ def main():
         Ga3cConfig.SAVE_FREQUENCY = 200
         Ga3cConfig.AGENTS = args.workers
         Ga3cConfig.LOAD_CHECKPOINT = args.restore
+        Ga3cConfig.STACKED_FRAMES = args.stacked_frames
         Ga3cConfig.BETA_START = args.starting_beta
         Ga3cConfig.BETA_END = args.starting_beta * 0.1
         Ga3cServer(predictor).main()

@@ -24,11 +24,28 @@ def sample_segment_from_path(path, segment_length):
 
     return segment
 
+def offset_for_stacking(items, offset):
+    """ Remove offset items from the end and copy out items from the start
+    of the list to offset to the original length. """
+    if offset < 1:
+        return items
+    return [items[0] for _ in range(offset)] + items[:-offset]
+
+def stack_frames(obs, depth):
+    """ Take a list of n obs arrays of shape (x,y) and stack them to return an array of shape (n,x,y,depth).
+    If depth=3, the first item will be just three copies of (x,y) stacked. The second item will have two copies of
+    the first item, and one of the second. The third item will be 1,2,3. The fourth will be 2,3,4 and so on."""
+    if depth < 1:
+        # Don't stack
+        return np.array(obs)
+    stacked_frames = np.array([offset_for_stacking(obs, offset) for offset in range(depth)])
+    return np.transpose(stacked_frames, [1, 2, 3, 0])  # Move the stack to be at the end.
+
 def random_action(env, ob):
     """ Pick an action by uniformly sampling the environment's action space. """
     return env.action_space.sample()
 
-def do_rollout(env, action_function):
+def do_rollout(env, action_function, stacked_frames):
     """ Builds a path by running through an environment using a provided function to select actions. """
     obs, rewards, actions, human_obs = [], [], [], []
     max_timesteps_per_episode = get_timesteps_per_episode(env)
@@ -45,14 +62,14 @@ def do_rollout(env, action_function):
             break
     # Build path dictionary
     path = {
-        "obs": np.array(obs),
+        "obs": stack_frames(obs, stacked_frames),
         "original_rewards": np.array(rewards),
         "actions": np.array(actions),
         "human_obs": np.array(human_obs)}
     return path
 
 def basic_segments_from_rand_rollout(
-    env_id, make_env, n_desired_segments, clip_length_in_seconds,
+    env_id, make_env, n_desired_segments, clip_length_in_seconds, stacked_frames,
     # These are only for use with multiprocessing
     seed=0, _verbose=True, _multiplier=1
 ):
@@ -63,7 +80,7 @@ def basic_segments_from_rand_rollout(
     space_prng.seed(seed)
     segment_length = int(clip_length_in_seconds * env.fps)
     while len(segments) < n_desired_segments:
-        path = do_rollout(env, random_action)
+        path = do_rollout(env, random_action, stacked_frames)
         # Calculate the number of segments to sample from the path
         # Such that the probability of sampling the same part twice is fairly low.
         segments_for_this_path = max(1, int(0.25 * len(path["obs"]) / segment_length))
@@ -79,16 +96,16 @@ def basic_segments_from_rand_rollout(
         print("Successfully collected %s segments" % (len(segments) * _multiplier))
     return segments
 
-def segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length_in_seconds, workers):
+def segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length_in_seconds, stacked_frames, workers):
     """ Generate a list of path segments by doing random rollouts. Can use multiple processes. """
     if workers < 2:  # Default to basic segment collection
-        return basic_segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length_in_seconds)
+        return basic_segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length_in_seconds, stacked_frames)
 
     pool = Pool(processes=workers)
     segments_per_worker = int(math.ceil(n_desired_segments / workers))
     # One job per worker. Only the first worker is verbose.
     jobs = [
-        (env_id, make_env, segments_per_worker, clip_length_in_seconds, i, i == 0, workers)
+        (env_id, make_env, segments_per_worker, clip_length_in_seconds, stacked_frames, i, i == 0, workers)
         for i in range(workers)]
     results = pool.starmap(basic_segments_from_rand_rollout, jobs)
     pool.close()
