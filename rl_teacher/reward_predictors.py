@@ -159,6 +159,8 @@ class ComparisonRewardPredictor(object):
         # self.agent_logger.log_episode(path)  <-- This is a huge memory problem!
 
         # We may be in a new part of the environment, so we take new segments to build comparisons from
+        # TODO: Reduce the quantity of segments!
+        # TODO: Prioritize new segements when doing comparisons!
         segment = sample_segment_from_path(path, int(self._frames_per_segment))
         if segment:
             self.comparison_collector.add_segment(segment)

@@ -109,7 +109,10 @@ class HumanComparisonCollector(object):
         # Load segments from disk
         self._max_segment_id = max(segment_ids) if segment_ids else 0
         for seg_id in range(1, self._max_segment_id + 1):
-            self._segments[seg_id] = pickle.load(open(self._pickle_path(seg_id), 'rb'))
+            try:
+                self._segments[seg_id] = pickle.load(open(self._pickle_path(seg_id), 'rb'))
+            except FileNotFoundError:
+                pass
         # Apply labels
         self.label_unlabeled_comparisons()
         # Report
@@ -123,7 +126,7 @@ class HumanComparisonCollector(object):
         return self._segments[index]
 
     def clear_old_data(self):
-        if len(self._segments > 0):
+        if len(self._segments) > 0:
             print("Erasing old comparison and segment data.")
 
         for seg_id in self._segments():
@@ -135,6 +138,29 @@ class HumanComparisonCollector(object):
 
         from human_feedback_api import Comparison
         Comparison.objects.filter(experiment_name=self.experiment_name).delete()
+
+    def clear_unused_data(self):
+        if len(self._segments) > 0:
+            print("Erasing unused comparison and segment data.")
+
+        unuseful_comparisons = [comp for comp in self._comparisons if comp['label'] not in [0, 1]]
+        self._comparisons = self.labeled_decisive_comparisons
+
+        from human_feedback_api import Comparison
+        for comp in unuseful_comparisons:
+            Comparison.objects.filter(experiment_name=self.experiment_name, id=comp['id']).delete()
+
+        used_seg_ids = set()
+        for comp in self._comparisons:
+            used_seg_ids.add(comp['left'])
+            used_seg_ids.add(comp['right'])
+
+        for seg_id in self._segments:
+            if seg_id not in used_seg_ids:
+                os.remove(self._pickle_path(seg_id))
+
+        self._segments = {k: self._segments[k] for k in self._segments if k in used_seg_ids}
+        self._max_segment_id = max(used_seg_ids)
 
     def _video_filename(self, segment_id):
         return "%s-%s.mp4" % (self.experiment_name, segment_id)
@@ -227,3 +253,11 @@ class HumanComparisonCollector(object):
             sleep(10)
             # Recurse until the human has labeled most of the pretraining comparisons
             self.label_unlabeled_comparisons(goal, verbose)
+
+if __name__ == '__main__':
+    print("=== Comparison Collector Utility ===")
+    experiment_name = input("Experiment name: ")
+    collector = HumanComparisonCollector(None, experiment_name)
+    print("Would you like to delete unused data? (yes/no)")
+    if input() == "yes":
+        collector.clear_unused_data()
