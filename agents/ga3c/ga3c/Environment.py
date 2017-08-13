@@ -92,4 +92,4 @@ class Environment:
 
         self.previous_state = self.current_state
         self.current_state = self._get_current_state()
-        return reward, done, info["human_obs"]
+        return reward, done, info
