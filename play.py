@@ -23,13 +23,17 @@ if __name__ == '__main__':
     command = None
     command_steps = -1
 
+    preprogrammed_sequences = {
+        'BOTTOM_RIGHT': [11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11,
+                         0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]}
+
     models = {name: NetworkVP('cpu:0', name, len(actions)) for name in model_names}
     for model in models.values():
         model.load()
 
     while not done:
         if env.current_state is None:
-            action = 0  # NO-OP while we wait for the frame buffer to fill.
+            env.step(0)  # NO-OP while we wait for the frame buffer to fill.
         else:
             if command_steps > 0:
                 command_steps -= 1
@@ -40,16 +44,18 @@ if __name__ == '__main__':
                     p = model.predict_p(np.expand_dims(env.current_state, axis=0))[0]
                     # action = np.argmax(p)
                     action = np.random.choice(actions, p=p)
+                _, done, _ = env.step(action)
             else:
                 if command is None:
                     print('Please input commands with a number of steps (like "left 12")')
                 raw = input().split()
-                if len(raw) != 2:
+                if len(raw) == 1 and raw[0] in preprogrammed_sequences:
+                    for action in preprogrammed_sequences[raw[0]]:
+                        env.step(action)
+                elif len(raw) != 2:
                     print('Malformed input. Try again.')
-                    continue
-                command, command_steps = raw[0], int(raw[1])
-                if command not in models and not command.isdigit():
-                    print('Unknown command "%s"' % command)
-                    command_steps = -1
-                    continue
-        rew, done, info = env.step(action)
+                else:
+                    command, command_steps = raw[0], int(raw[1])
+                    if command not in models and not command.isdigit():
+                        print('Unknown command "%s"' % command)
+                        command_steps = -1
