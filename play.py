@@ -18,11 +18,12 @@ if __name__ == '__main__':
     Ga3cConfig.PLAY_MODE = True
 
     env = Environment()
+    actions = np.arange(env.get_num_actions())
     done = False
     command = None
     command_steps = -1
 
-    models = {name: NetworkVP('cpu:0', name, env.get_num_actions()) for name in model_names}
+    models = {name: NetworkVP('cpu:0', name, len(actions)) for name in model_names}
     for model in models.values():
         model.load()
 
@@ -32,15 +33,23 @@ if __name__ == '__main__':
         else:
             if command_steps > 0:
                 command_steps -= 1
-                model = models[command]
-                p = model.predict_p(np.expand_dims(env.current_state, axis=0))
-                action = np.argmax(p)
+                if command.isdigit():
+                    action = int(command)
+                else:
+                    model = models[command]
+                    p = model.predict_p(np.expand_dims(env.current_state, axis=0))[0]
+                    # action = np.argmax(p)
+                    action = np.random.choice(actions, p=p)
             else:
                 if command is None:
                     print('Please input commands with a number of steps (like "left 12")')
-                command, raw_steps = input().split()
-                if command not in models:
-                    print('Unknown command "%s"' % command)
+                raw = input().split()
+                if len(raw) != 2:
+                    print('Malformed input. Try again.')
                     continue
-                command_steps = int(raw_steps)
+                command, command_steps = raw[0], int(raw[1])
+                if command not in models and not command.isdigit():
+                    print('Unknown command "%s"' % command)
+                    command_steps = -1
+                    continue
         rew, done, info = env.step(action)
