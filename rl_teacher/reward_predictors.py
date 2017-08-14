@@ -38,7 +38,7 @@ class ComparisonRewardPredictor(object):
         self._frames_per_segment = clip_length * env.fps
         self._steps_since_last_training = 0
         self._steps_since_last_checkpoint = 0
-        self._n_timesteps_per_predictor_training = 1e2  # How often should we train our predictor?
+        self._n_timesteps_per_predictor_training = 2e3  # How often should we train our predictor?
         self._n_timesteps_per_checkpoint = 2e4  # How often should we save our model
         self._elapsed_predictor_training_iters = 0
         self._num_checkpoints = 0
@@ -162,7 +162,7 @@ class ComparisonRewardPredictor(object):
         # TODO: Reduce the quantity of segments!
         # TODO: Prioritize new segements when doing comparisons!
         segment = sample_segment_from_path(path, int(self._frames_per_segment))
-        if segment:
+        if segment and len(self.comparison_collector._segments) < 1000:
             self.comparison_collector.add_segment(segment)
 
         # If we need more comparisons, then we build them from our recent segments
