@@ -19,20 +19,19 @@ from rl_teacher.segment_sampling import segments_from_rand_rollout
 from rl_teacher.summaries import AgentLogger, make_summary_writer
 from rl_teacher.utils import slugify
 
-def make_comparison_predictor(env, experiment_name, predictor_type, summary_writer,
-                              clip_length, stacked_frames, n_pretrain_labels, n_labels=None):
-    agent_logger = AgentLogger(summary_writer)
-
+def make_label_schedule(n_pretrain_labels, n_labels, num_timesteps, agent_logger):
     if n_labels:
-        label_schedule = LabelAnnealer(
+        return LabelAnnealer(
             agent_logger,
             final_timesteps=num_timesteps,
             final_labels=n_labels,
             pretrain_labels=n_pretrain_labels)
     else:
         print("No label limit given. We will request one label every few seconds.")
-        label_schedule = ConstantLabelSchedule(pretrain_labels=n_pretrain_labels)
+        return ConstantLabelSchedule(pretrain_labels=n_pretrain_labels)
 
+def make_comparison_predictor(env, experiment_name, predictor_type, summary_writer,
+                              clip_length, stacked_frames, agent_logger, label_schedule):
     if predictor_type == "synth":
         comparison_collector = SyntheticComparisonCollector()
     elif predictor_type == "human":
@@ -108,10 +107,12 @@ def main():
     if args.predictor == "rl":
         predictor = TraditionalRLRewardPredictor(summary_writer)
     else:
+        agent_logger = AgentLogger(summary_writer)
         n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
+        schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, agent_logger)
         predictor = make_comparison_predictor(
             env, experiment_name, args.predictor, summary_writer,
-            args.clip_length, args.stacked_frames, n_pretrain_labels, args.n_labels)
+            args.clip_length, args.stacked_frames, agent_logger, schedule)
 
         if args.restore:
             predictor.load_model_from_checkpoint()
