@@ -70,7 +70,7 @@ class TransparentWrapper(gym.Wrapper):
             return getattr(self.env, attr)
         # HACK: Gym wraps environments with a TimeLimit wrapper sometimes, hiding the the ArcadeLearningEnvironment (ALE).
         # We want to reach past the wrapper to get it. (clone_state is a helper function for the ALE. See atari_env.py in gym.)
-        if (attr in ['ale', 'clone_state']) \
+        if (attr in ['ale', 'clone_state', 'restore_state']) \
                 and hasattr(self.env, 'env') and self.env is not None and hasattr(self.env.env, attr):
             return getattr(self.env.env, attr)
         raise AttributeError(type(self), attr)
@@ -158,11 +158,18 @@ class RandomStartPoint(TransparentWrapper):
         self.env._reset()
         for command in nav_to_start:
             self.env.step(command)
-        return self.clone_state()  # We need to call env.env to get at the core Atari environment. :\
+        return self.clone_state()
 
     def _reset(self):
-        ref = self.ale.decodeState(random.choice(self._reset_options))
-        self.ale.restoreState(ref)
+        self.env.reset()  # <-- This is VITAL for resetting the inner TimeLimit. Otherwise all episodes will finish instantly after 10000 global steps.
+        start_point = random.choice(self._reset_options)
+        # There's a BUG in Gym: https://github.com/openai/gym/commit/339415aa03a9b039a51f67798a44f8cd21464091#diff-56ee07e2f2b6161a732de3552602ba98
+        # Use this to route around it for the moment:
+        state_ref = self.ale.decodeState(start_point)
+        self.ale.restoreState(state_ref)
+        self.ale.deleteState(state_ref)
+        # TODO: Once it's fixed in the package manager, use this:
+        # self.restore_state(start_point)
         ob, _, _, _ = self.env.step(0)  # Kick it off with a NULLOP
         return ob
 
