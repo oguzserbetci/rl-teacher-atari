@@ -129,7 +129,7 @@ class HumanComparisonCollector(object):
         if len(self._segments) > 0:
             print("Erasing old comparison and segment data.")
 
-        for seg_id in self._segments():
+        for seg_id in self._segments:
             os.remove(self._pickle_path(seg_id))
 
         self._comparisons = []
