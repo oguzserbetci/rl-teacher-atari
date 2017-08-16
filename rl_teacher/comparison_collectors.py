@@ -1,5 +1,4 @@
 import multiprocessing
-import traceback
 import os
 import uuid
 import random
@@ -11,15 +10,10 @@ import numpy as np
 from rl_teacher.video import write_segment_to_video, upload_to_gcs
 
 def _write_and_upload_video(segment, render_full_obs, fps, gcs_path, video_local_path, segment_local_path):
-    try:
-        with open(segment_local_path, 'wb') as f:
-            pickle.dump(segment, f)  # Write seg to disk
-        write_segment_to_video(segment, fname=video_local_path, render_full_obs=render_full_obs, fps=fps)
-        upload_to_gcs(video_local_path, gcs_path)
-    except Exception:
-        # Exceptions in Pool workers don't bubble up until .get() is called.
-        # But _write_and_upload_video is fire-and-forget, so we need to yell if there's a problem.
-        traceback.print_exc()
+    with open(segment_local_path, 'wb') as f:
+        pickle.dump(segment, f)  # Write seg to disk
+    write_segment_to_video(segment, fname=video_local_path, render_full_obs=render_full_obs, fps=fps)
+    upload_to_gcs(video_local_path, gcs_path)
 
 # TODO: Create ComparisonCollector parent class!
 
@@ -67,7 +61,7 @@ class SyntheticComparisonCollector(object):
         if verbose:
             print("%s synthetic labels generated... " % (len(self.labeled_comparisons)))
 
-    def _add_synthetic_label(comparison):
+    def _add_synthetic_label(self, comparison):
         left_seg = self.get_segment(comparison['left'])
         right_seg = self.get_segment(comparison['right'])
         left_has_more_rew = np.sum(left_seg["original_rewards"]) > np.sum(right_seg["original_rewards"])
@@ -92,6 +86,7 @@ class HumanComparisonCollector(object):
         self.env = env
         self.experiment_name = experiment_name
         self._upload_workers = multiprocessing.Pool(workers)
+        self._pending_upload_results = []
 
         segment_ids = set()
         # Load comparisons from database
@@ -201,8 +196,12 @@ class HumanComparisonCollector(object):
         self._max_segment_id = seg_id
         self._segments[seg_id] = seg
         # Write the segment to disk and upload
-        self._upload_workers.apply_async(_write_and_upload_video, (
-            seg, self.env.render_full_obs, self.env.fps, self._gcs_path(seg_id), self._video_path(seg_id), self._pickle_path(seg_id)))
+        self._pending_upload_results.append(self._upload_workers.apply_async(_write_and_upload_video, (
+            seg, self.env.render_full_obs, self.env.fps, self._gcs_path(seg_id), self._video_path(seg_id), self._pickle_path(seg_id))))
+        # Avoid memory leaks! Check old pending results to see if we can clear the memory. Also reveals errors.
+        for pending_result in self._pending_upload_results:
+            if pending_result.ready():
+                pending_result.get(timeout=60)
 
     def invent_comparison(self):
         # TODO: Make this intelligent!
