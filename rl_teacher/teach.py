@@ -12,29 +12,26 @@ from ga3c.Config import Config as Ga3cConfig
 from rl_teacher.reward_predictors import TraditionalRLRewardPredictor, ComparisonRewardPredictor
 from rl_teacher.comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
 from rl_teacher.envs import get_timesteps_per_episode
-from rl_teacher.envs import make_with_torque_removed
+from rl_teacher.envs import make_env
 from rl_teacher.label_schedules import LabelAnnealer, ConstantLabelSchedule
 from rl_teacher.video import SegmentVideoRecorder
 from rl_teacher.segment_sampling import segments_from_rand_rollout
 from rl_teacher.summaries import AgentLogger, make_summary_writer
-from rl_teacher.utils import slugify, corrcoef
+from rl_teacher.utils import slugify
 
-# TODO: Parameterize this.
-CLIP_LENGTH = 1.5
-
-def make_comparison_predictor(env, experiment_name, predictor_type, summary_writer, n_pretrain_labels, n_labels=None):
-    agent_logger = AgentLogger(summary_writer)
-
+def make_label_schedule(n_pretrain_labels, n_labels, num_timesteps, agent_logger):
     if n_labels:
-        label_schedule = LabelAnnealer(
+        return LabelAnnealer(
             agent_logger,
             final_timesteps=num_timesteps,
             final_labels=n_labels,
             pretrain_labels=n_pretrain_labels)
     else:
         print("No label limit given. We will request one label every few seconds.")
-        label_schedule = ConstantLabelSchedule(pretrain_labels=n_pretrain_labels)
+        return ConstantLabelSchedule(pretrain_labels=n_pretrain_labels)
 
+def make_comparison_predictor(env, experiment_name, predictor_type, summary_writer,
+                              clip_length, stacked_frames, agent_logger, label_schedule):
     if predictor_type == "synth":
         comparison_collector = SyntheticComparisonCollector()
     elif predictor_type == "human":
@@ -49,8 +46,31 @@ def make_comparison_predictor(env, experiment_name, predictor_type, summary_writ
         comparison_collector=comparison_collector,
         agent_logger=agent_logger,
         label_schedule=label_schedule,
-        clip_length=CLIP_LENGTH
+        clip_length=clip_length,
+        stacked_frames=stacked_frames
     )
+
+def generate_random_pretraining_data(predictor, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
+    print("Starting random rollouts to generate pretraining segments. No learning will take place...")
+    pretrain_segments = segments_from_rand_rollout(
+        env_id, make_env, n_desired_segments=n_pretrain_labels * 2,
+        clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
+
+    # Add segments to comparison collector
+    for seg in pretrain_segments:
+        predictor.comparison_collector.add_segment(seg)
+    # Turn our random segments into comparisons
+    for _ in range(n_pretrain_labels):
+        predictor.comparison_collector.invent_comparison()
+    # Label our comparisons
+    predictor.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
+
+def pretrain_predictor(predictor, n_pretrain_iters):
+    print("Starting pretraining...")
+    for i in range(1, n_pretrain_iters + 1):
+        predictor.train_predictor()  # Train on pretraining labels
+        if i % 25 == 0:
+            print("%s/%s predictor pretraining iters... " % (i, n_pretrain_iters))
 
 def main():
     parser = argparse.ArgumentParser()
@@ -65,8 +85,11 @@ def main():
     parser.add_argument('-a', '--agent', default="ga3c", type=str)
     parser.add_argument('-i', '--pretrain_iters', default=10000, type=int)
     parser.add_argument('-b', '--starting_beta', default=0.1, type=float)
+    parser.add_argument('-c', '--clip_length', default=1.5, type=float)
+    parser.add_argument('-f', '--stacked_frames', default=4, type=int)
     parser.add_argument('-V', '--no_videos', action="store_true")
-    parser.add_argument('-r', '--restore', action="store_true")
+    parser.add_argument('-R', '--restore', action="store_true")
+    parser.add_argument('-r', '--soft_restore', action="store_true")
     args = parser.parse_args()
 
     print("Setting things up...")
@@ -74,7 +97,7 @@ def main():
     experiment_name = slugify(args.name)
     run_name = "%s/%s-%s" % (env_id, experiment_name, int(time()))
     summary_writer = make_summary_writer(run_name)
-    env = make_with_torque_removed(env_id)
+    env = make_env(env_id)
     num_timesteps = int(args.num_timesteps)
 
     os.makedirs('checkpoints/reward_model', exist_ok=True)
@@ -84,35 +107,24 @@ def main():
     if args.predictor == "rl":
         predictor = TraditionalRLRewardPredictor(summary_writer)
     else:
+        agent_logger = AgentLogger(summary_writer)
         n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
+        schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, agent_logger)
         predictor = make_comparison_predictor(
-            env, experiment_name, args.predictor, summary_writer, n_pretrain_labels, args.n_labels)
+            env, experiment_name, args.predictor, summary_writer,
+            args.clip_length, args.stacked_frames, agent_logger, schedule)
 
         if args.restore:
             predictor.load_model_from_checkpoint()
             print("Model loaded from checkpoint!")
+        elif args.soft_restore:
+            # Assume that the relevant segments are already loaded
+            pretrain_predictor(predictor, args.pretrain_iters)
         else:
             predictor.comparison_collector.clear_old_data()
-
-            print("Starting random rollouts to generate pretraining segments. No learning will take place...")
-            pretrain_segments = segments_from_rand_rollout(
-                env_id, make_with_torque_removed, n_desired_segments=n_pretrain_labels * 2,
-                clip_length_in_seconds=CLIP_LENGTH, workers=args.workers)
-
-            # Add segments to comparison collector
-            for seg in pretrain_segments:
-                predictor.comparison_collector.add_segment(seg)
-            # Turn our random segments into comparisons
-            for _ in range(n_pretrain_labels):
-                predictor.comparison_collector.invent_comparison()
-            # Label our comparisons
-            predictor.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
-
-            # Pretrain predictor
-            for i in range(args.pretrain_iters):
-                predictor.train_predictor()  # Train on pretraining labels
-                if i % 25 == 0:
-                    print("%s/%s predictor pretraining iters... " % (i, args.pretrain_iters))
+            generate_random_pretraining_data(
+                predictor, env_id, n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
+            pretrain_predictor(predictor, args.pretrain_iters)
 
     # Wrap the predictor to capture videos every so often:
     if not args.no_videos:
@@ -121,18 +133,20 @@ def main():
 
     print("Starting joint training of predictor and agent")
     if args.agent == "ga3c":
+        Ga3cConfig.ATARI_GAME = env_id
+        Ga3cConfig.MAKE_ENV_FUNCTION = make_env
         Ga3cConfig.NETWORK_NAME = experiment_name
         Ga3cConfig.SAVE_FREQUENCY = 200
+        Ga3cConfig.AGENTS = args.workers
         Ga3cConfig.LOAD_CHECKPOINT = args.restore
+        Ga3cConfig.STACKED_FRAMES = args.stacked_frames
         Ga3cConfig.BETA_START = args.starting_beta
         Ga3cConfig.BETA_END = args.starting_beta * 0.1
-        Ga3cConfig.ATARI_GAME = env
-        Ga3cConfig.AGENTS = args.workers
         Ga3cServer(predictor).main()
     elif args.agent == "parallel_trpo":
         train_parallel_trpo(
             env_id=env_id,
-            make_env=make_with_torque_removed,
+            make_env=make_env,
             predictor=predictor,
             summary_writer=summary_writer,
             workers=args.workers,
@@ -143,10 +157,7 @@ def main():
             seed=args.seed,
         )
     elif args.agent == "pposgd_mpi":
-        def make_env():
-            return make_with_torque_removed(env_id)
-
-        train_pposgd_mpi(make_env, num_timesteps=num_timesteps, seed=args.seed, predictor=predictor)
+        train_pposgd_mpi(lambda: make_env(env_id), num_timesteps=num_timesteps, seed=args.seed, predictor=predictor)
     else:
         raise ValueError("%s is not a valid choice for args.agent" % args.agent)
 

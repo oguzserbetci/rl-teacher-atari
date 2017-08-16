@@ -24,22 +24,16 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import gym
-
 
 class GameManager:
-    def __init__(self, game, display):
+    def __init__(self, game_name, make_game, display):
         self.display = display
-
-        if type(game) is str:
-            self.game_name = game
-            self.env = gym.make(game)
-            self.reset()
-        else:
-            self.env = game
-            self.game_name = str(game)
+        self.game_name = game_name
+        self.env = make_game(game_name)
+        self.reset()
 
     def is_atari(self):
+        # Returns false if the space has already been compressed.
         return self.env.observation_space.shape == (210, 160, 3)
 
     def reset(self):

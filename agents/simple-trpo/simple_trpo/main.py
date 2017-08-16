@@ -211,8 +211,8 @@ if __name__ == '__main__':
 
     def seeded_env_fn(seed):
         def env_fn():
-            from rl_teacher.envs import make_with_torque_removed
-            env = make_with_torque_removed(env_id)
+            from rl_teacher.envs import make_env
+            env = make_env(env_id)
             env.seed(seed)
             return env
         return env_fn

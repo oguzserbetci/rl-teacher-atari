@@ -1,5 +1,4 @@
 import multiprocessing
-import traceback
 import os
 import uuid
 import random
@@ -10,16 +9,13 @@ import numpy as np
 
 from rl_teacher.video import write_segment_to_video, upload_to_gcs
 
-def _write_and_upload_video(segment, env, gcs_path, video_local_path, segment_local_path):
-    try:
-        with open(segment_local_path, 'wb') as f:
-            pickle.dump(segment, f)  # Write seg to disk
-        write_segment_to_video(segment, fname=video_local_path, env=env)
-        upload_to_gcs(video_local_path, gcs_path)
-    except Exception:
-        # Exceptions in Pool workers don't bubble up until .get() is called.
-        # But _write_and_upload_video is fire-and-forget, so we need to yell if there's a problem.
-        traceback.print_exc()
+def _write_and_upload_video(segment, render_full_obs, fps, gcs_path, video_local_path, segment_local_path):
+    with open(segment_local_path, 'wb') as f:
+        pickle.dump(segment, f)  # Write seg to disk
+    write_segment_to_video(segment, fname=video_local_path, render_full_obs=render_full_obs, fps=fps)
+    upload_to_gcs(video_local_path, gcs_path)
+
+# TODO: Create ComparisonCollector parent class!
 
 class SyntheticComparisonCollector(object):
     def __init__(self):
@@ -57,13 +53,15 @@ class SyntheticComparisonCollector(object):
         return [comp for comp in self._comparisons if comp['label'] is None]
 
     def label_unlabeled_comparisons(self, goal=None, verbose=False):
-        # TODO: Handle "goal" parameter?
+        if goal:
+            while len(self) < goal:
+                self.invent_comparison()
         for comp in self.unlabeled_comparisons:
             self._add_synthetic_label(comp)
         if verbose:
             print("%s synthetic labels generated... " % (len(self.labeled_comparisons)))
 
-    def _add_synthetic_label(comparison):
+    def _add_synthetic_label(self, comparison):
         left_seg = self.get_segment(comparison['left'])
         right_seg = self.get_segment(comparison['right'])
         left_has_more_rew = np.sum(left_seg["original_rewards"]) > np.sum(right_seg["original_rewards"])
@@ -84,36 +82,80 @@ class HumanComparisonCollector(object):
 
         self._comparisons = []
         self._segments = {}
-        self._max_segment_id = 0
+        self._max_segment_id = 0  # Initialized later in the function. Included here because it's a member var.
         self.env = env
         self.experiment_name = experiment_name
         self._upload_workers = multiprocessing.Pool(workers)
+        self._pending_upload_results = []
 
-        # Loading old data from database/disk
+        segment_ids = set()
+        # Load comparisons from database
         for comp in Comparison.objects.filter(experiment_name=experiment_name):
             left_seg_id = self._segment_id_from_url(comp.media_url_1)
             right_seg_id = self._segment_id_from_url(comp.media_url_2)
-            self._segments[left_seg_id] = pickle.load(open(self._pickle_path(left_seg_id), 'rb'))
-            self._segments[right_seg_id] = pickle.load(open(self._pickle_path(right_seg_id), 'rb'))
-            self._max_segment_id = max(self._max_segment_id, left_seg_id, right_seg_id)
+            segment_ids.add(left_seg_id)
+            segment_ids.add(right_seg_id)
             self._comparisons.append({
                 "left": left_seg_id,
                 "right": right_seg_id,
                 "id": comp.id,
                 "label": None
             })
-        print("Found %s old comparisons from a previous run!" % len(self._comparisons))
+        # Load segments from disk
+        self._max_segment_id = max(segment_ids) if segment_ids else 0
+        for seg_id in range(1, self._max_segment_id + 1):
+            try:
+                self._segments[seg_id] = pickle.load(open(self._pickle_path(seg_id), 'rb'))
+            except FileNotFoundError:
+                pass
+        # Apply labels
+        self.label_unlabeled_comparisons()
+        # Report
+        if len(self._segments) < 1:
+            print("Starting fresh!")
+        else:
+            print("Found %s old comparisons (%s labeled) of %s segments (max(id)=%s) from a previous run!" % (
+                len(self._comparisons), len(self.labeled_decisive_comparisons), len(self._segments), self._max_segment_id))
 
     def get_segment(self, index):
         return self._segments[index]
 
     def clear_old_data(self):
+        if len(self._segments) > 0:
+            print("Erasing old comparison and segment data.")
+
+        for seg_id in self._segments:
+            os.remove(self._pickle_path(seg_id))
+
         self._comparisons = []
         self._segments = {}
         self._max_segment_id = 0
 
         from human_feedback_api import Comparison
         Comparison.objects.filter(experiment_name=self.experiment_name).delete()
+
+    def clear_unused_data(self):
+        if len(self._segments) > 0:
+            print("Erasing unused comparison and segment data.")
+
+        unuseful_comparisons = [comp for comp in self._comparisons if comp['label'] not in [0, 1]]
+        self._comparisons = self.labeled_decisive_comparisons
+
+        from human_feedback_api import Comparison
+        for comp in unuseful_comparisons:
+            Comparison.objects.filter(experiment_name=self.experiment_name, id=comp['id']).delete()
+
+        used_seg_ids = set()
+        for comp in self._comparisons:
+            used_seg_ids.add(comp['left'])
+            used_seg_ids.add(comp['right'])
+
+        for seg_id in self._segments:
+            if seg_id not in used_seg_ids:
+                os.remove(self._pickle_path(seg_id))
+
+        self._segments = {k: self._segments[k] for k in self._segments if k in used_seg_ids}
+        self._max_segment_id = max(used_seg_ids)
 
     def _video_filename(self, segment_id):
         return "%s-%s.mp4" % (self.experiment_name, segment_id)
@@ -154,13 +196,17 @@ class HumanComparisonCollector(object):
         self._max_segment_id = seg_id
         self._segments[seg_id] = seg
         # Write the segment to disk and upload
-        self._upload_workers.apply_async(_write_and_upload_video, (
-            seg, self.env, self._gcs_path(seg_id), self._video_path(seg_id), self._pickle_path(seg_id)))
+        self._pending_upload_results.append(self._upload_workers.apply_async(_write_and_upload_video, (
+            seg, self.env.render_full_obs, self.env.fps, self._gcs_path(seg_id), self._video_path(seg_id), self._pickle_path(seg_id))))
+        # Avoid memory leaks! Check old pending results to see if we can clear the memory. Also reveals errors.
+        for pending_result in self._pending_upload_results:
+            if pending_result.ready():
+                pending_result.get(timeout=60)
 
     def invent_comparison(self):
         # TODO: Make this intelligent!
-        left_seg_id = random.randrange(len(self._segments))
-        right_seg_id = random.randrange(len(self._segments))
+        left_seg_id = random.choice(list(self._segments.keys()))  # Needs to be a list so it can be indexed.
+        right_seg_id = random.choice(list(self._segments.keys()))
         comparison_id = self._create_comparison_in_webapp(left_seg_id, right_seg_id)
         self._comparisons.append({
             "left": left_seg_id,
@@ -206,3 +252,11 @@ class HumanComparisonCollector(object):
             sleep(10)
             # Recurse until the human has labeled most of the pretraining comparisons
             self.label_unlabeled_comparisons(goal, verbose)
+
+if __name__ == '__main__':
+    print("=== Comparison Collector Utility ===")
+    experiment_name = input("Experiment name: ")
+    collector = HumanComparisonCollector(None, experiment_name)
+    print("Would you like to delete unused data? (yes/no)")
+    if input() == "yes":
+        collector.clear_unused_data()

@@ -25,18 +25,18 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import sys
-if sys.version_info >= (3,0):
-    from queue import Queue as queueQueue
-else:
-    from Queue import Queue as queueQueue
-
+import time
 from datetime import datetime
 from multiprocessing import Process, Queue, Value
 
 import numpy as np
-import time
 
 from ga3c.Config import Config
+
+if sys.version_info >= (3, 0):
+    from queue import Queue as queueQueue
+else:
+    from Queue import Queue as queueQueue
 
 
 class ProcessStats(Process):
@@ -78,10 +78,11 @@ class ProcessStats(Process):
                 rolling_frame_count += length
                 rolling_reward += reward
 
-                # COPYPASTA FROM Server.py TODO: Refactor!
+                # COPYPASTA FROM Server.py TODO: Refactor! #
                 step = min(self.episode_count.value, Config.ANNEALING_EPISODE_COUNT - 1)
                 beta_multiplier = (Config.BETA_END - Config.BETA_START) / Config.ANNEALING_EPISODE_COUNT
                 beta = Config.BETA_START + beta_multiplier * step
+                ###
 
                 if results_q.full():
                     old_episode_time, old_reward, old_length = results_q.get()

@@ -24,6 +24,8 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import gym
+
 class Config:
 
     #########################################################################
@@ -31,6 +33,9 @@ class Config:
 
     # Name of the game, with version (e.g. PongDeterministic-v0)
     ATARI_GAME = 'PongDeterministic-v0'
+
+    # Function used to make the game environment. Takes game name as its only parameter.
+    MAKE_ENV_FUNCTION = gym.make
 
     # Enable to see the trained agent in action
     PLAY_MODE = False

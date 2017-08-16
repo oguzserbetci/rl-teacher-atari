@@ -2,6 +2,8 @@ import os
 import random
 from time import sleep
 
+from multiprocessing import Process
+
 import numpy as np
 import tensorflow as tf
 from keras import backend as K
@@ -25,7 +27,7 @@ class TraditionalRLRewardPredictor(object):
 class ComparisonRewardPredictor(object):
     """Predictor that trains a model to predict how much reward is contained in a trajectory segment"""
 
-    def __init__(self, env, experiment_name, summary_writer, comparison_collector, agent_logger, label_schedule, clip_length):
+    def __init__(self, env, experiment_name, summary_writer, comparison_collector, agent_logger, label_schedule, clip_length, stacked_frames):
         self.summary_writer = summary_writer
         self.agent_logger = agent_logger
         self.comparison_collector = comparison_collector
@@ -36,19 +38,25 @@ class ComparisonRewardPredictor(object):
         self._frames_per_segment = clip_length * env.fps
         self._steps_since_last_training = 0
         self._steps_since_last_checkpoint = 0
-        self._n_timesteps_per_predictor_training = 1e2  # How often should we train our predictor?
-        self._n_timesteps_per_checkpoint = 5e4  # How often should we save our model
+        self._n_timesteps_per_predictor_training = 2e3  # How often should we train our predictor?
+        self._n_timesteps_per_checkpoint = 2e4  # How often should we save our model
         self._elapsed_predictor_training_iters = 0
         self._num_checkpoints = 0
 
         # Build and initialize our predictor model
         config = tf.ConfigProto(
-            device_count={'GPU': 0}
+            # device_count={'GPU': 0},
+            # log_device_placement=True,
         )
-        self.sess = tf.InteractiveSession(config=config)
+        config.gpu_options.per_process_gpu_memory_fraction = 0.35  # allow_growth = True
+        self.sess = tf.Session(config=config)
+
         self.obs_shape = env.observation_space.shape
+        if stacked_frames > 0:
+            self.obs_shape = self.obs_shape + (stacked_frames,)
         self.discrete_action_space = not hasattr(env.action_space, "shape")
         self.act_shape = (env.action_space.n,) if self.discrete_action_space else env.action_space.shape
+
         self.graph = self._build_model()
         self.sess.run(tf.global_variables_initializer())
         my_vars = tf.global_variables()
@@ -148,11 +156,13 @@ class ComparisonRewardPredictor(object):
         self._steps_since_last_training += path_length
         self._steps_since_last_checkpoint += path_length
 
-        self.agent_logger.log_episode(path)
+        # self.agent_logger.log_episode(path)  <-- This is a huge memory problem!
 
         # We may be in a new part of the environment, so we take new segments to build comparisons from
+        # TODO: Reduce the quantity of segments!
+        # TODO: Prioritize new segements when doing comparisons!
         segment = sample_segment_from_path(path, int(self._frames_per_segment))
-        if segment:
+        if segment and len(self.comparison_collector._segments) < 1000:
             self.comparison_collector.add_segment(segment)
 
         # If we need more comparisons, then we build them from our recent segments
@@ -181,16 +191,16 @@ class ComparisonRewardPredictor(object):
     def train_predictor(self):
         self.comparison_collector.label_unlabeled_comparisons()
 
-        minibatch_size = min(64, len(self.comparison_collector.labeled_decisive_comparisons))
-        labeled_comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
-        left_segs = [self.comparison_collector.get_segment(comp['left']) for comp in labeled_comparisons]
-        right_segs = [self.comparison_collector.get_segment(comp['right']) for comp in labeled_comparisons]
+        minibatch_size = min(128, len(self.comparison_collector.labeled_decisive_comparisons))
+        comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
+        left_segs = [self.comparison_collector.get_segment(comp['left']) for comp in comparisons]
+        right_segs = [self.comparison_collector.get_segment(comp['right']) for comp in comparisons]
 
         left_obs = np.asarray([left['obs'] for left in left_segs])
         left_acts = np.asarray([left['actions'] for left in left_segs])
         right_obs = np.asarray([right['obs'] for right in right_segs])
         right_acts = np.asarray([right['actions'] for right in right_segs])
-        labels = np.asarray([comp['label'] for comp in labeled_comparisons])
+        labels = np.asarray([comp['label'] for comp in comparisons])
 
         with self.graph.as_default():
             _, loss = self.sess.run([self.train_op, self.loss_op], feed_dict={
