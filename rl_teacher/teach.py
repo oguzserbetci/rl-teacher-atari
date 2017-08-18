@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 from parallel_trpo.train import train_parallel_trpo
 from pposgd_mpi.run_mujoco import train_pposgd_mpi
+from pposgd_mpi.run_atari import train_atari
 from ga3c.Server import Server as Ga3cServer
 from ga3c.Config import Config as Ga3cConfig
 
@@ -158,6 +159,9 @@ def main():
         )
     elif args.agent == "pposgd_mpi":
         train_pposgd_mpi(lambda: make_env(env_id), num_timesteps=num_timesteps, seed=args.seed, predictor=predictor)
+    elif args.agent == "ppo_atari":
+        # TODO: Add Multi-CPU support!
+        train_atari(env, num_timesteps=num_timesteps, seed=args.seed, num_cpu=1, predictor=predictor)
     else:
         raise ValueError("%s is not a valid choice for args.agent" % args.agent)
 

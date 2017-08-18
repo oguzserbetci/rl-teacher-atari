@@ -8,6 +8,7 @@ import numpy as np
 import tensorflow as tf
 from keras import backend as K
 
+from rl_teacher.summaries import AgentLogger
 from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet
 from rl_teacher.segment_sampling import sample_segment_from_path
 from rl_teacher.utils import corrcoef
