@@ -39,7 +39,8 @@ def traj_segment_generator(pi, env, steps_per_batch, stochastic, predictor=None)
         # before returning segment [0, T-1] so we get the correct
         # terminal value
         if t > 0 and t % steps_per_batch == 0:
-            path = {"obs": obs, "rew": rews, "vpred": vpreds, "new": news,
+            path = {
+                "obs": obs, "rew": rews, "vpred": vpreds, "new": news,
                 "actions": acs, "prevac": prevacs, "nextvpred": vpred * (1 - new),
                 "ep_rets": ep_rets, "ep_lens": ep_lens, "human_obs": human_obs}
 
@@ -86,10 +87,13 @@ def traj_segment_generator(pi, env, steps_per_batch, stochastic, predictor=None)
 def split_path_by_episode(path):
     """Split path into episodes and yield a deepcopy of each one"""
     ep_breaks = np.where(path['new'])[0]
+    # HACK: This is a potential failure point.
+    # We assume that the steps_per_batch is high enough to always have at least a full episode.
     start = ep_breaks[0]
     for end in ep_breaks[1:]:
-        yield deepcopy({k: v[start:end] for k, v in path.items()
-            if k in ['obs', 'actions', 'original_rewards', 'human_obs']})
+        yield deepcopy({k: v[start:end]
+                        for k, v in path.items()
+                        if k in ['obs', 'actions', 'original_rewards', 'human_obs']})
         start = end
 
 def add_vtarg_and_adv(seg, gamma, lam):
@@ -108,7 +112,8 @@ def add_vtarg_and_adv(seg, gamma, lam):
         gaelam[t] = lastgaelam = delta + gamma * lam * nonterminal * lastgaelam
     seg["tdlamret"] = seg["adv"] + seg["vpred"]
 
-def learn(env, policy_func, *,
+def learn(
+        env, policy_func, *,
         timesteps_per_batch,  # timesteps per actor per update
         clip_param, entcoeff,  # clipping parameter epsilon, entropy coeff
         optim_epochs, optim_stepsize, optim_batchsize,  # optimization hypers
@@ -127,7 +132,8 @@ def learn(env, policy_func, *,
     atarg = tf.placeholder(dtype=tf.float32, shape=[None])  # Target advantage function (if applicable)
     ret = tf.placeholder(dtype=tf.float32, shape=[None])  # Empirical return
 
-    lrmult = tf.placeholder(name='lrmult', dtype=tf.float32,
+    lrmult = tf.placeholder(
+        name='lrmult', dtype=tf.float32,
         shape=[])  # learning rate multiplier, updated with schedule
     clip_param = clip_param * lrmult  # Annealed cliping parameter epislon
 
@@ -157,7 +163,8 @@ def learn(env, policy_func, *,
     lossandgrad = U.function([ob, ac, atarg, ret, lrmult], losses + [U.flatgrad(total_loss, var_list)])
     adam = MpiAdam(var_list)
 
-    assign_old_eq_new = U.function([], [], updates=[tf.assign(oldv, newv)
+    assign_old_eq_new = U.function([], [], updates=[
+        tf.assign(oldv, newv)
         for (oldv, newv) in zipsame(oldpi.get_variables(), pi.get_variables())])
     compute_losses = U.function([ob, ac, atarg, ret, lrmult], losses)
 
@@ -176,10 +183,11 @@ def learn(env, policy_func, *,
     rewbuffer = deque(maxlen=100)  # rolling buffer for episode rewards
 
     assert sum([max_iters > 0, max_timesteps > 0, max_episodes > 0,
-        max_seconds > 0]) == 1, "Only one time constraint permitted"
+                max_seconds > 0]) == 1, "Only one time constraint permitted"
 
     while True:
-        if callback: callback(locals(), globals())
+        if callback:
+            callback(locals(), globals())
         if max_timesteps and timesteps_so_far >= max_timesteps:
             break
         elif max_episodes and episodes_so_far >= max_episodes:
@@ -208,7 +216,8 @@ def learn(env, policy_func, *,
         d = Dataset(dict(obs=ob, actions=ac, atarg=atarg, vtarg=tdlamret), shuffle=not pi.recurrent)
         optim_batchsize = optim_batchsize or ob.shape[0]
 
-        if hasattr(pi, "ob_rms"): pi.ob_rms.update(ob)  # update running mean/std for policy
+        if hasattr(pi, "ob_rms"):
+            pi.ob_rms.update(ob)  # update running mean/std for policy
 
         assign_old_eq_new()  # set old parameter values to new parameter values
         logger.log("Optimizing...")

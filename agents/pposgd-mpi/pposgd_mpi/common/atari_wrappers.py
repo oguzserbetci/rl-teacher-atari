@@ -137,13 +137,14 @@ class FrameStack(gym.Wrapper):
         self.k = k
         self.frames = deque([], maxlen=k)
         shp = env.observation_space.shape
-        assert shp[2] == 1  # can only stack 1-channel frames
+        assert len(shp) == 2 or shp[2] == 1  # can only stack 1-channel frames
         self.observation_space = spaces.Box(low=0, high=255, shape=(shp[0], shp[1], k))
 
     def _reset(self):
         """Clear buffer and re-fill by duplicating the first observation."""
         ob = self.env.reset()
-        for _ in range(self.k): self.frames.append(ob)
+        for _ in range(self.k):
+            self.frames.append(ob)
         return self._observation()
 
     def _step(self, action):
@@ -153,7 +154,10 @@ class FrameStack(gym.Wrapper):
 
     def _observation(self):
         assert len(self.frames) == self.k
-        return np.concatenate(self.frames, axis=2)
+        if len(self.frames[0].shape) == 2:
+            return np.stack(self.frames, axis=2)
+        else:
+            return np.concatenate(self.frames, axis=2)
 
 def wrap_deepmind(env, episode_life=True, clip_rewards=True):
     """Configure environment for DeepMind-style Atari.
