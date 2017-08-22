@@ -11,7 +11,6 @@ from ga3c.Server import Server as Ga3cServer
 from ga3c.Config import Config as Ga3cConfig
 
 from rl_teacher.reward_predictors import TraditionalRLRewardPredictor, ComparisonRewardPredictor
-from rl_teacher.comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
 from rl_teacher.envs import get_timesteps_per_episode
 from rl_teacher.envs import make_env
 from rl_teacher.label_schedules import LabelAnnealer, ConstantLabelSchedule
@@ -30,26 +29,6 @@ def make_label_schedule(n_pretrain_labels, n_labels, num_timesteps, agent_logger
     else:
         print("No label limit given. We will request one label every few seconds.")
         return ConstantLabelSchedule(pretrain_labels=n_pretrain_labels)
-
-def make_comparison_predictor(env, experiment_name, predictor_type, summary_writer,
-                              clip_length, stacked_frames, agent_logger, label_schedule):
-    if predictor_type == "synth":
-        comparison_collector = SyntheticComparisonCollector()
-    elif predictor_type == "human":
-        comparison_collector = HumanComparisonCollector(env, experiment_name=experiment_name)
-    else:
-        raise ValueError("Bad value for --predictor: %s" % predictor_type)
-
-    return ComparisonRewardPredictor(
-        env,
-        experiment_name,
-        summary_writer,
-        comparison_collector=comparison_collector,
-        agent_logger=agent_logger,
-        label_schedule=label_schedule,
-        clip_length=clip_length,
-        stacked_frames=stacked_frames
-    )
 
 def generate_random_pretraining_data(predictor, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
     print("Starting random rollouts to generate pretraining segments. No learning will take place...")
@@ -111,9 +90,16 @@ def main():
         agent_logger = AgentLogger(summary_writer)
         n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
         schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, agent_logger)
-        predictor = make_comparison_predictor(
-            env, experiment_name, args.predictor, summary_writer,
-            args.clip_length, args.stacked_frames, agent_logger, schedule)
+        predictor = ComparisonRewardPredictor(
+            env,
+            experiment_name,
+            summary_writer,
+            args.predictor,
+            agent_logger=agent_logger,
+            label_schedule=schedule,
+            clip_length=args.clip_length,
+            stacked_frames=args.stacked_frames
+        )
 
         if args.restore:
             predictor.load_model_from_checkpoint()

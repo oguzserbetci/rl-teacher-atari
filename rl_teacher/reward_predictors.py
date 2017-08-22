@@ -10,6 +10,7 @@ from keras import backend as K
 
 from rl_teacher.summaries import AgentLogger
 from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet
+from rl_teacher.comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
 from rl_teacher.segment_sampling import sample_segment_from_path
 from rl_teacher.utils import corrcoef
 
@@ -28,10 +29,16 @@ class TraditionalRLRewardPredictor(object):
 class ComparisonRewardPredictor(object):
     """Predictor that trains a model to predict how much reward is contained in a trajectory segment"""
 
-    def __init__(self, env, experiment_name, summary_writer, comparison_collector, agent_logger, label_schedule, clip_length, stacked_frames):
+    def __init__(self, env, experiment_name, summary_writer, predictor_type, agent_logger, label_schedule, clip_length, stacked_frames):
+        if predictor_type == "synth":
+            self.comparison_collector = SyntheticComparisonCollector()
+        elif predictor_type == "human":
+            self.comparison_collector = HumanComparisonCollector(env, experiment_name=experiment_name)
+        else:
+            raise ValueError("Bad value for --predictor: %s" % predictor_type)
+
         self.summary_writer = summary_writer
         self.agent_logger = agent_logger
-        self.comparison_collector = comparison_collector
         self.label_schedule = label_schedule
         self.experiment_name = experiment_name
 
