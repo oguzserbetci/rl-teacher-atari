@@ -7,12 +7,35 @@ from multiprocessing import Process
 import numpy as np
 import tensorflow as tf
 from keras import backend as K
+from scipy import stats
 
 from rl_teacher.summaries import AgentLogger
 from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet
 from rl_teacher.comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
-from rl_teacher.segment_sampling import sample_segment_from_path
+from rl_teacher.segment_sampling import segments_from_rand_rollout, sample_segment_from_path
 from rl_teacher.utils import corrcoef
+
+def nn_predict_rewards(self, obs_segments, act_segments, network, obs_shape, act_shape):
+    """
+    :param obs_segments: tensor with shape = (batch_size, segment_length) + obs_shape
+    :param act_segments: tensor with shape = (batch_size, segment_length) + act_shape
+    :param network: neural net with .run() that maps obs and act tensors into a (scalar) value tensor
+    :param obs_shape: a tuple representing the shape of the observation space
+    :param act_shape: a tuple representing the shape of the action space
+    :return: tensor with shape = (batch_size, segment_length)
+    """
+    batchsize = tf.shape(obs_segments)[0]
+    segment_length = tf.shape(obs_segments)[1]
+
+    # Temporarily chop up segments into individual observations and actions
+    obs = tf.reshape(obs_segments, (-1,) + self.obs_shape)
+    acts = tf.reshape(act_segments, (-1,) + self.act_shape)
+
+    # Run them through our neural network
+    rewards = network.run(obs, acts)
+
+    # Group the rewards back into their segments
+    return tf.reshape(rewards, (batchsize, segment_length))
 
 class TraditionalRLRewardPredictor(object):
     """Predictor that always returns the true reward provided by the environment."""
@@ -25,6 +48,136 @@ class TraditionalRLRewardPredictor(object):
 
     def path_callback(self, path):
         pass
+
+    def reset_training_data(self, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
+        pass  # No training data
+
+    def train_predictor(self):
+        pass  # Doesn't require training
+
+    def load_model_from_checkpoint(self):
+        pass  # There's no model
+
+class ChironRewardModel(object):
+    """A learned model of an environmental reward using training data that is merely sorted."""
+
+    def __init__(self, env, experiment_name, label_schedule, clip_length, stacked_frames):
+        self.label_schedule = label_schedule
+        self.experiment_name = experiment_name
+        self._frames_per_segment = clip_length * env.fps
+        # The reward distribution has sigma such that each frame of a clip has expected reward 1
+        self._standard_deviation = self._frames_per_segment
+        self._elapsed_predictor_training_iters = 0
+
+        # Build and initialize our predictor model
+        config = tf.ConfigProto(
+            # device_count={'GPU': 0},
+            # log_device_placement=True,
+        )
+        config.gpu_options.per_process_gpu_memory_fraction = 0.35  # allow_growth = True
+        self.sess = tf.Session(config=config)
+
+        self.obs_shape = env.observation_space.shape
+        if stacked_frames > 0:
+            self.obs_shape = self.obs_shape + (stacked_frames,)
+        self.discrete_action_space = not hasattr(env.action_space, "shape")
+        self.act_shape = (env.action_space.n,) if self.discrete_action_space else env.action_space.shape
+
+        self.graph = self._build_model()
+        self.sess.run(tf.global_variables_initializer())
+        my_vars = tf.global_variables()
+        self.saver = tf.train.Saver({var.name: var for var in my_vars}, max_to_keep=0)
+
+    def _build_model(self):
+        """
+        Our model takes in path segments with observations and actions, and generates rewards (Q-values).
+        """
+        # Set up observation placeholder
+        self.obs_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None) + self.obs_shape, name="obs_placeholder")
+
+        # Set up action placeholder
+        if self.discrete_action_space:
+            self.act_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None), name="act_placeholder")
+            # Discrete actions need to become one-hot vectors for the model
+            segment_act = tf.one_hot(tf.cast(self.segment_act_placeholder, tf.int32), self.act_shape[0])
+        else:
+            self.act_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None) + self.act_shape, name="act_placeholder")
+            # Assume the actions are how we want them
+            segment_act = self.segment_act_placeholder
+
+        # A neural network maps a (state, action) pair to a reward
+        net = SimpleConvolveObservationQNet(self.obs_shape, self.act_shape)
+        self.rewards = nn_predict_rewards(self.obs_placeholder, segment_act, net, self.obs_shape, self.act_shape)
+
+        # We use trajectory segments rather than individual (state, action) pairs because
+        # video clips of segments are easier for humans to evaluate
+        segment_rewards = tf.reduce_sum(self.rewards, axis=1)
+
+        self.targets = tf.placeholder(dtype=tf.float32, shape=(None,), name="reward_targets")
+
+        self.loss = tf.metrics.mean_squared_error(self.targets, segment_rewards)
+
+        global_step = tf.Variable(0, name='global_step', trainable=False)
+        self.train_op = tf.train.AdamOptimizer().minimize(self.loss, global_step=global_step)
+
+        return tf.get_default_graph()
+
+    def predict_reward(self, path):
+        """Predict the reward for each step in a given path"""
+        with self.graph.as_default():
+            predicted_rewards = self.sess.run(self.rewards, feed_dict={
+                self.obs_placeholder: np.asarray([path["obs"]]),
+                self.act_placeholder: np.asarray([path["actions"]]),
+                K.learning_phase(): False
+            })
+        return predicted_rewards[0]
+
+    def path_callback(self, path):
+        raise NotImplementedError()  # TODO
+
+    def reset_training_data(self, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
+        # TODO: Collect a single clip of standing still to use as the seed, then collect random rollouts
+        raise NotImplementedError()
+
+    def get_training_batch(self):
+        """ Get a batch of training data from the clip manager """
+        self.clip_manager.sort_clips()
+
+        batch_size = min(128, len(self.clip_manager.sorted_clips))
+        clips = random.sample(self.clip_manager.sorted_clips, batch_size)
+
+        obs = [clip['obs'] for clip in clips]
+        acts = [clip['actions'] for clip in clips]
+
+        # Here is where the magic happens.
+        # We project the ordinal information into a cardinal value to use as a reward.
+        ordinals = [clip['ordinal'] for clip in clips]
+        max_ordinal = self.clip_manager.maximum_ordinal  # Equivalent to the size of the sorting tree
+        step_size = 1.0 / (max_ordinal + 1)
+        offset = step_size / 2
+        targets = [self._standard_deviation * stats.norm.ppf(offset + (step_size * o)) for o in ordinals]
+
+        return obs, acts, targets
+
+    def train_predictor(self):
+        obs, acts, targets = self.get_training_batch()
+
+        with self.graph.as_default():
+            _, loss = self.sess.run([self.train_op, self.loss], feed_dict={
+                self.obs_placeholder: np.asarray(obs),
+                self.act_placeholder: np.asarray(acts),
+                self.targets: np.asarray(targets),
+                K.learning_phase(): True
+            })
+            self._elapsed_predictor_training_iters += 1
+            print("Training iter %s: error = %s" % (self._elapsed_predictor_training_iters, loss))
+
+    def _checkpoint_filename(self):
+        return 'checkpoints/reward_model/%s/treesave' % (self.experiment_name)
+
+    def load_model_from_checkpoint(self):
+        filename = tf.train.latest_checkpoint(os.path.dirname(self._checkpoint_filename()))
+        self.saver.restore(self.sess, filename)
 
 class ComparisonRewardPredictor(object):
     """Predictor that trains a model to predict how much reward is contained in a trajectory segment"""
@@ -70,26 +223,6 @@ class ComparisonRewardPredictor(object):
         my_vars = tf.global_variables()
         self.saver = tf.train.Saver({var.name: var for var in my_vars}, max_to_keep=0)
 
-    def _predict_rewards(self, obs_segments, act_segments, network):
-        """
-        :param obs_segments: tensor with shape = (batch_size, segment_length) + obs_shape
-        :param act_segments: tensor with shape = (batch_size, segment_length) + act_shape
-        :param network: neural net with .run() that maps obs and act tensors into a (scalar) value tensor
-        :return: tensor with shape = (batch_size, segment_length)
-        """
-        batchsize = tf.shape(obs_segments)[0]
-        segment_length = tf.shape(obs_segments)[1]
-
-        # Temporarily chop up segments into individual observations and actions
-        obs = tf.reshape(obs_segments, (-1,) + self.obs_shape)
-        acts = tf.reshape(act_segments, (-1,) + self.act_shape)
-
-        # Run them through our neural network
-        rewards = network.run(obs, acts)
-
-        # Group the rewards back into their segments
-        return tf.reshape(rewards, (batchsize, segment_length))
-
     def _build_model(self):
         """
         Our model takes in path segments with states and actions, and generates Q values.
@@ -126,8 +259,8 @@ class ComparisonRewardPredictor(object):
         # net = FullyConnectedMLP(self.obs_shape, self.act_shape)
         net = SimpleConvolveObservationQNet(self.obs_shape, self.act_shape)
 
-        self.q_value = self._predict_rewards(self.segment_obs_placeholder, segment_act, net)
-        alt_q_value = self._predict_rewards(self.segment_alt_obs_placeholder, segment_alt_act, net)
+        self.q_value = nn_predict_rewards(self.segment_obs_placeholder, segment_act, net, self.obs_shape, self.act_shape)
+        alt_q_value = nn_predict_rewards(self.segment_alt_obs_placeholder, segment_alt_act, net, self.obs_shape, self.act_shape)
 
         # We use trajectory segments rather than individual (state, action) pairs because
         # video clips of segments are easier for humans to evaluate
@@ -188,6 +321,23 @@ class ComparisonRewardPredictor(object):
             self._num_checkpoints += 1
             self.saver.save(self.sess, self._checkpoint_filename())
             self._steps_since_last_checkpoint = 0
+
+    def reset_training_data(self, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
+        self.comparison_collector.clear_old_data()
+
+        print("Starting random rollouts to generate pretraining segments. No learning will take place...")
+        pretrain_segments = segments_from_rand_rollout(
+            env_id, make_env, n_desired_segments=n_pretrain_labels * 2,
+            clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
+
+        # Add segments to comparison collector
+        for seg in pretrain_segments:
+            self.comparison_collector.add_segment(seg)
+        # Turn our random segments into comparisons
+        for _ in range(n_pretrain_labels):
+            self.comparison_collector.invent_comparison()
+        # Label our comparisons
+        self.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
 
     def _checkpoint_filename(self):
         return 'checkpoints/reward_model/%s/%08d' % (self.experiment_name, self._num_checkpoints)

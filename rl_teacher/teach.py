@@ -10,12 +10,11 @@ from pposgd_mpi.run_atari import train_atari
 from ga3c.Server import Server as Ga3cServer
 from ga3c.Config import Config as Ga3cConfig
 
-from rl_teacher.reward_predictors import TraditionalRLRewardPredictor, ComparisonRewardPredictor
+from rl_teacher.reward_predictors import TraditionalRLRewardPredictor, ChironRewardModel, ComparisonRewardPredictor
 from rl_teacher.envs import get_timesteps_per_episode
 from rl_teacher.envs import make_env
 from rl_teacher.label_schedules import LabelAnnealer, ConstantLabelSchedule
 from rl_teacher.video import SegmentVideoRecorder
-from rl_teacher.segment_sampling import segments_from_rand_rollout
 from rl_teacher.summaries import AgentLogger, make_summary_writer
 from rl_teacher.utils import slugify
 
@@ -30,23 +29,9 @@ def make_label_schedule(n_pretrain_labels, n_labels, num_timesteps, agent_logger
         print("No label limit given. We will request one label every few seconds.")
         return ConstantLabelSchedule(pretrain_labels=n_pretrain_labels)
 
-def generate_random_pretraining_data(predictor, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
-    print("Starting random rollouts to generate pretraining segments. No learning will take place...")
-    pretrain_segments = segments_from_rand_rollout(
-        env_id, make_env, n_desired_segments=n_pretrain_labels * 2,
-        clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
-
-    # Add segments to comparison collector
-    for seg in pretrain_segments:
-        predictor.comparison_collector.add_segment(seg)
-    # Turn our random segments into comparisons
-    for _ in range(n_pretrain_labels):
-        predictor.comparison_collector.invent_comparison()
-    # Label our comparisons
-    predictor.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
-
 def pretrain_predictor(predictor, n_pretrain_iters):
-    print("Starting pretraining...")
+    if n_pretrain_iters:
+        print("Starting pretraining...")
     for i in range(1, n_pretrain_iters + 1):
         predictor.train_predictor()  # Train on pretraining labels
         if i % 25 == 0:
@@ -79,6 +64,9 @@ def main():
     summary_writer = make_summary_writer(run_name)
     env = make_env(env_id)
     num_timesteps = int(args.num_timesteps)
+    agent_logger = AgentLogger(summary_writer)
+    n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
+    schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, agent_logger)
 
     os.makedirs('checkpoints/reward_model', exist_ok=True)
     os.makedirs('segments', exist_ok=True)
@@ -86,10 +74,10 @@ def main():
     # Make predictor
     if args.predictor == "rl":
         predictor = TraditionalRLRewardPredictor(summary_writer)
+        args.pretrain_iters = 0  # Don't bother pre-training a traditional RL agent
+    elif args.predictor == "chiron":
+        predictor = ChironRewardModel(env, experiment_name, schedule, args.clip_length, args.stacked_frames)
     else:
-        agent_logger = AgentLogger(summary_writer)
-        n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
-        schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, agent_logger)
         predictor = ComparisonRewardPredictor(
             env,
             experiment_name,
@@ -101,17 +89,20 @@ def main():
             stacked_frames=args.stacked_frames
         )
 
-        if args.restore:
-            predictor.load_model_from_checkpoint()
-            print("Model loaded from checkpoint!")
-        elif args.soft_restore:
-            # Assume that the relevant segments are already loaded
-            pretrain_predictor(predictor, args.pretrain_iters)
-        else:
-            predictor.comparison_collector.clear_old_data()
-            generate_random_pretraining_data(
-                predictor, env_id, n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
-            pretrain_predictor(predictor, args.pretrain_iters)
+    # Load data and pre-train
+    if args.restore:
+        predictor.load_model_from_checkpoint()
+        print("Model loaded from checkpoint!")
+    elif args.soft_restore:
+        # Assume that the relevant training data is already loaded
+        pretrain_predictor(predictor, args.pretrain_iters)
+    else:
+        predictor.reset_training_data(env_id, n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
+        pretrain_predictor(predictor, args.pretrain_iters)
+
+    print("Done with pretraining!")
+    print("Stopping")
+    return
 
     # Wrap the predictor to capture videos every so often:
     if not args.no_videos:
