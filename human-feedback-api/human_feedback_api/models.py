@@ -55,3 +55,15 @@ class Clip(models.Model):
     clip_tracking_id = models.IntegerField('clip tracking id', db_index=True)
 
     source = models.TextField('note of where the clip came from', default="", blank=True)
+
+class SortTree(models.Model):
+    """ Extends a red-black tree to handle async clip sorting with equivalence. """
+
+    parent = models.ForeignKey('self', null=True, related_name='+')
+    left = models.ForeignKey('self', null=True, related_name='+')
+    right = models.ForeignKey('self', null=True, related_name='+')
+
+    pending_clips = models.ManyToManyField(Clip, related_name='pending_sort_locations')
+    bound_clips = models.ManyToManyField(Clip, related_name='tree_bindings')
+
+    is_red = models.BooleanField()  # Used for red-black autobalancing
