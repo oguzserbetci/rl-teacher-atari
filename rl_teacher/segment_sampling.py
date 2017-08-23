@@ -45,6 +45,12 @@ def random_action(env, ob):
     """ Pick an action by uniformly sampling the environment's action space. """
     return env.action_space.sample()
 
+def null_action(env, ob):
+    """ Do nothing. """
+    if env.action_space.n:  # Is descrete action space
+        return 0
+    raise NotImplementedError()  # TODO: Handle other action spaces
+
 def do_rollout(env, action_function, stacked_frames):
     """ Builds a path by running through an environment using a provided function to select actions. """
     obs, rewards, actions, human_obs = [], [], [], []
@@ -67,6 +73,13 @@ def do_rollout(env, action_function, stacked_frames):
         "actions": np.array(actions),
         "human_obs": np.array(human_obs)}
     return path
+
+def basic_segment_from_null_action(env_id, make_env, clip_length_in_seconds, stacked_frames):
+    """ Returns a segment from the start of a path made from doing nothing. """
+    env = make_env(env_id)
+    segment_length = int(clip_length_in_seconds * env.fps)
+    path = do_rollout(env, null_action, stacked_frames)
+    return _slice_path(path, segment_length)
 
 def basic_segments_from_rand_rollout(
     env_id, make_env, n_desired_segments, clip_length_in_seconds, stacked_frames,
@@ -109,4 +122,4 @@ def segments_from_rand_rollout(env_id, make_env, n_desired_segments, clip_length
         for i in range(workers)]
     results = pool.starmap(basic_segments_from_rand_rollout, jobs)
     pool.close()
-    return [segment for sublist in results for segment in sublist]
+    return [segment for sublist in results for segment in sublist][:n_desired_segments]
