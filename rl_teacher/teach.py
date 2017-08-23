@@ -65,18 +65,19 @@ def main():
     env = make_env(env_id)
     num_timesteps = int(args.num_timesteps)
     agent_logger = AgentLogger(summary_writer)
-    n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
+    n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else (args.n_labels // 4 if args.n_labels else 0)
     schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, agent_logger)
 
     os.makedirs('checkpoints/reward_model', exist_ok=True)
     os.makedirs('segments', exist_ok=True)
+    os.makedirs('clips', exist_ok=True)
 
     # Make predictor
     if args.predictor == "rl":
         predictor = TraditionalRLRewardPredictor(summary_writer)
         args.pretrain_iters = 0  # Don't bother pre-training a traditional RL agent
     elif args.predictor == "chiron":
-        predictor = ChironRewardModel(env, experiment_name, schedule, args.clip_length, args.stacked_frames)
+        predictor = ChironRewardModel(env, experiment_name, schedule, args.clip_length, args.stacked_frames, args.workers)
     else:
         predictor = ComparisonRewardPredictor(
             env,
@@ -97,7 +98,8 @@ def main():
         # Assume that the relevant training data is already loaded
         pretrain_predictor(predictor, args.pretrain_iters)
     else:
-        predictor.reset_training_data(env_id, n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
+        predictor.reset_training_data(
+            env_id, make_env, n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
         pretrain_predictor(predictor, args.pretrain_iters)
 
     print("Done with pretraining!")

@@ -10,12 +10,13 @@ from keras import backend as K
 from scipy import stats
 
 from rl_teacher.summaries import AgentLogger
+from rl_teacher.clip_manager import ClipManager
 from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet
 from rl_teacher.comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
-from rl_teacher.segment_sampling import segments_from_rand_rollout, sample_segment_from_path
+from rl_teacher.segment_sampling import segments_from_rand_rollout, sample_segment_from_path, basic_segment_from_null_action
 from rl_teacher.utils import corrcoef
 
-def nn_predict_rewards(self, obs_segments, act_segments, network, obs_shape, act_shape):
+def nn_predict_rewards(obs_segments, act_segments, network, obs_shape, act_shape):
     """
     :param obs_segments: tensor with shape = (batch_size, segment_length) + obs_shape
     :param act_segments: tensor with shape = (batch_size, segment_length) + act_shape
@@ -28,8 +29,8 @@ def nn_predict_rewards(self, obs_segments, act_segments, network, obs_shape, act
     segment_length = tf.shape(obs_segments)[1]
 
     # Temporarily chop up segments into individual observations and actions
-    obs = tf.reshape(obs_segments, (-1,) + self.obs_shape)
-    acts = tf.reshape(act_segments, (-1,) + self.act_shape)
+    obs = tf.reshape(obs_segments, (-1,) + obs_shape)
+    acts = tf.reshape(act_segments, (-1,) + act_shape)
 
     # Run them through our neural network
     rewards = network.run(obs, acts)
@@ -61,13 +62,18 @@ class TraditionalRLRewardPredictor(object):
 class ChironRewardModel(object):
     """A learned model of an environmental reward using training data that is merely sorted."""
 
-    def __init__(self, env, experiment_name, label_schedule, clip_length, stacked_frames):
+    def __init__(self, env, experiment_name, label_schedule, clip_length, stacked_frames, workers):
+        self.clip_manager = ClipManager(env, experiment_name, workers)
+
         self.label_schedule = label_schedule
         self.experiment_name = experiment_name
         self._frames_per_segment = clip_length * env.fps
         # The reward distribution has sigma such that each frame of a clip has expected reward 1
         self._standard_deviation = self._frames_per_segment
         self._elapsed_predictor_training_iters = 0
+        self._episode_count = 0
+        self._episodes_per_training = 2
+        self._episodes_per_checkpoint = 200
 
         # Build and initialize our predictor model
         config = tf.ConfigProto(
@@ -89,9 +95,7 @@ class ChironRewardModel(object):
         self.saver = tf.train.Saver({var.name: var for var in my_vars}, max_to_keep=0)
 
     def _build_model(self):
-        """
-        Our model takes in path segments with observations and actions, and generates rewards (Q-values).
-        """
+        """Our model takes in path segments with observations and actions, and generates rewards (Q-values)."""
         # Set up observation placeholder
         self.obs_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None) + self.obs_shape, name="obs_placeholder")
 
@@ -99,7 +103,7 @@ class ChironRewardModel(object):
         if self.discrete_action_space:
             self.act_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None), name="act_placeholder")
             # Discrete actions need to become one-hot vectors for the model
-            segment_act = tf.one_hot(tf.cast(self.segment_act_placeholder, tf.int32), self.act_shape[0])
+            segment_act = tf.one_hot(tf.cast(self.act_placeholder, tf.int32), self.act_shape[0])
         else:
             self.act_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None) + self.act_shape, name="act_placeholder")
             # Assume the actions are how we want them
@@ -115,7 +119,7 @@ class ChironRewardModel(object):
 
         self.targets = tf.placeholder(dtype=tf.float32, shape=(None,), name="reward_targets")
 
-        self.loss = tf.metrics.mean_squared_error(self.targets, segment_rewards)
+        self.loss = tf.reduce_mean(tf.square(self.targets - segment_rewards))
 
         global_step = tf.Variable(0, name='global_step', trainable=False)
         self.train_op = tf.train.AdamOptimizer().minimize(self.loss, global_step=global_step)
@@ -133,25 +137,55 @@ class ChironRewardModel(object):
         return predicted_rewards[0]
 
     def path_callback(self, path):
-        raise NotImplementedError()  # TODO
+        self._episode_count += 1
 
-    def reset_training_data(self, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
-        # TODO: Collect a single clip of standing still to use as the seed, then collect random rollouts
-        raise NotImplementedError()
+        # We may be in a new part of the environment, so we take a clip to learn from if requested
+        if len(self.clip_manager.total_clips) < self.label_schedule.n_desired_labels:  # TODO: Change "labels" to clips!
+            new_clip = sample_segment_from_path(path, int(self._frames_per_segment))
+            if new_clip:
+                self.clip_manager.add(new_clip, source="on-policy callback")
+
+        # Train our model every X episodes
+        if self._episode_count % self._episodes_per_training == 0:
+            self.train_predictor()
+
+        # Save our predictor every X steps
+        if self._episode_count % self._episodes_per_checkpoint == 0:
+            print("Saving reward model checkpoint!")
+            self.saver.save(self.sess, self._checkpoint_filename())
+
+    def reset_training_data(self, env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers):
+        self.clip_manager.clear_old_data()
+
+        print("Starting random rollouts to generate pretraining segments. No learning will take place...")
+        # We need a valid clip for the root node of our search tree.
+        # Null actions are more likely to generate a valid clip than a random clip from random actions.
+        first_clip = basic_segment_from_null_action(env_id, make_env, clip_length, stacked_frames)
+
+        random_clips = segments_from_rand_rollout(
+            env_id, make_env, n_desired_segments=n_pretrain_clips,
+            clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
+
+        # Add the null-action clip first, so the root is valid.
+        self.clip_manager.add(first_clip, source="null-action", sync=True)  # Make syncronus to ensure this is the first clip.
+        # Now add the rest
+        for clip in random_clips:
+            self.clip_manager.add(clip, source="random rollout")
+
+        self.clip_manager.sort_clips(wait_until_database_sorted=True)
 
     def get_training_batch(self):
         """ Get a batch of training data from the clip manager """
         self.clip_manager.sort_clips()
 
-        batch_size = min(128, len(self.clip_manager.sorted_clips))
-        clips = random.sample(self.clip_manager.sorted_clips, batch_size)
+        batch_size = min(128, self.clip_manager.number_of_sorted_clips())
+        clips, ordinals = self.clip_manager.sample_sorted_clips(batch_size)
 
         obs = [clip['obs'] for clip in clips]
         acts = [clip['actions'] for clip in clips]
 
         # Here is where the magic happens.
         # We project the ordinal information into a cardinal value to use as a reward.
-        ordinals = [clip['ordinal'] for clip in clips]
         max_ordinal = self.clip_manager.maximum_ordinal  # Equivalent to the size of the sorting tree
         step_size = 1.0 / (max_ordinal + 1)
         offset = step_size / 2
@@ -322,7 +356,7 @@ class ComparisonRewardPredictor(object):
             self.saver.save(self.sess, self._checkpoint_filename())
             self._steps_since_last_checkpoint = 0
 
-    def reset_training_data(self, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
+    def reset_training_data(self, env_id, make_env, n_pretrain_labels, clip_length, stacked_frames, workers):
         self.comparison_collector.clear_old_data()
 
         print("Starting random rollouts to generate pretraining segments. No learning will take place...")
