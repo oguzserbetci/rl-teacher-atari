@@ -45,3 +45,13 @@ class Comparison(models.Model):
             raise ValidationError(
                 _('%(value)s is not included in %(options)s'),
                 params={'value': self.response, 'options': self.response_options}, )
+
+class Clip(models.Model):
+    created_at = models.DateTimeField('date created', auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+
+    media_url = models.TextField('media url', db_index=True)
+    environment_id = models.TextField('environment id', db_index=True)
+    clip_tracking_id = models.IntegerField('clip tracking id', db_index=True)
+
+    source = models.TextField('note of where the clip came from', default="", blank=True)

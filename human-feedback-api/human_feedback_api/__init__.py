@@ -17,3 +17,8 @@ try:
     from human_feedback_api.models import Comparison
 except AppRegistryNotReady:
     logging.info("Could not yet import Feedback")
+
+try:
+    from human_feedback_api.models import Clip
+except AppRegistryNotReady:
+    logging.info("Could not yet import Clip models")
