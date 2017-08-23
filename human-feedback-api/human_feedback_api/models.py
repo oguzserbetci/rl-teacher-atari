@@ -66,4 +66,6 @@ class SortTree(models.Model):
     pending_clips = models.ManyToManyField(Clip, related_name='pending_sort_locations')
     bound_clips = models.ManyToManyField(Clip, related_name='tree_bindings')
 
+    experiment_name = models.TextField('name of experiment')
+
     is_red = models.BooleanField()  # Used for red-black autobalancing
