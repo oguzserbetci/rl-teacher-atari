@@ -72,3 +72,27 @@ class SortTree(models.Model):
     experiment_name = models.TextField('name of experiment')
 
     is_red = models.BooleanField()  # Used for red-black autobalancing
+
+    # I could theoretically do these with a setter decorator,
+    # but I want to be able to manipulate them directly without autosaving if needed.
+    def make_red(self):
+        self.is_red = True
+        self.save()
+
+    def make_black(self):
+        self.is_red = False
+        self.save()
+
+    def set_left(self, x):
+        self.left = x
+        self.save()
+        if x:
+            x.parent = self
+            x.save()
+
+    def set_right(self, x):
+        self.right = x
+        self.save()
+        if x:
+            x.parent = self
+            x.save()

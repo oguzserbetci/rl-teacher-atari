@@ -12,6 +12,8 @@ from human_feedback_api.models import Comparison
 from human_feedback_api.models import SortTree
 from human_feedback_api.models import Clip
 
+import human_feedback_api.redblack_tree as redblack
+
 register = template.Library()
 
 ExperimentResource = namedtuple("ExperimentResource", ['name', 'num_responses', 'started_at', 'pretty_time_elapsed'])
@@ -113,29 +115,51 @@ def respond(request, experiment_name):
     })
 
 # New interface
-def compare(request, experiment_name):
+def _handle_node_pending_clips(node):
+    for clip1 in node.pending_clips.all():
+        try:
+            comp = Comparison.objects.get(tree_node=node, media_url_1=clip1.media_url)
+            if comp.response:
+                if comp.response in ["left", "right"]:
+                    # Okay, this is a little bit weird. Sorry for the awkwardness.
+                    # When the user responds "left" they're saying that the left clip is BETTER
+                    # In the redblack tree, left-nodes are worse, and right-nodes are better.
+                    # Since clip1 is the left clip, we want to move it left in the tree if the user says "right".
+                    is_worse = (comp.response == "right")
+                    tree_changed = redblack.move_clip_down(node, clip1, is_worse)
+                    return clip1, tree_changed
+                else:  # Assume tie
+                    node.bound_clips.add(clip1)
+                    return clip1, False
+            # else:
+            #    still waiting on response for this comparison
+        except Comparison.DoesNotExist:
+            clip2 = random.choice(node.bound_clips.all())
+            print("Let's make a comparison between", clip1, clip1.clip_tracking_id, "and", clip2, clip2.clip_tracking_id)
+
+            comparison = Comparison(
+                experiment_name=experiment_name,
+                media_url_1=clip1.media_url,
+                media_url_2=clip2.media_url,
+                response_kind='left_or_right',
+                priority=1.,
+                tree_node=node,
+            )
+            comparison.full_clean()
+            comparison.save()
+    return None, False
+
+def _sorting_logic(experiment_name):
     # Look to generate comparisons from the tree
     active_tree_nodes = SortTree.objects.filter(experiment_name=experiment_name).exclude(pending_clips=None)
     for node in active_tree_nodes:
-        for clip1 in node.pending_clips.all():
-            try:
-                comp = Comparison.objects.get(tree_node=node, media_url_1=clip1.media_url)
-                if comp.response:
-                    print("Response recieved! Update the tree!")
-                # Else: still waiting on response
-            except Comparison.DoesNotExist:
-                clip2 = random.choice(node.bound_clips.all())
-                print("Let's make a comparison between ", clip1, clip1.clip_tracking_id, " and ", clip2, clip2.clip_tracking_id)
+        clip_to_remove, tree_changed = _handle_node_pending_clips(node)
+        if clip_to_remove:
+            node.pending_clips.remove(clip_to_remove)
+        if tree_changed:  # If the tree changed, we want to stop looping
+            break
 
-                comparison = Comparison(
-                    experiment_name=experiment_name,
-                    media_url_1=clip1.media_url,
-                    media_url_2=clip2.media_url,
-                    response_kind='left_or_right',
-                    priority=1.,
-                    tree_node=node,
-                )
-                comparison.full_clean()
-                comparison.save()
+def compare(request, experiment_name):
+    _sorting_logic(experiment_name)
 
     return respond(request, experiment_name)
