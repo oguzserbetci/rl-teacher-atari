@@ -27,7 +27,7 @@ class Comparison(models.Model):
     note = models.TextField('note to be displayed along with the query', default="", blank=True)
 
     # The Binary Search/Sort Tree that this comparison belongs to. Only used for new-style experiments.
-    tree_node = models.ForeignKey('SortTree', null=True, default=None)
+    tree_node = models.ForeignKey('SortTree', null=True, blank=True, default=None)
 
     # Validation
     def full_clean(self, exclude=None, validate_unique=True):

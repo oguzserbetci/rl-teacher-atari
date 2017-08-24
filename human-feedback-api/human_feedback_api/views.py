@@ -115,7 +115,7 @@ def respond(request, experiment_name):
     })
 
 # New interface
-def _handle_node_pending_clips(node):
+def _handle_node_pending_clips(node, experiment_name):
     for clip1 in node.pending_clips.all():
         try:
             comp = Comparison.objects.get(tree_node=node, media_url_1=clip1.media_url)
@@ -153,7 +153,7 @@ def _sorting_logic(experiment_name):
     # Look to generate comparisons from the tree
     active_tree_nodes = SortTree.objects.filter(experiment_name=experiment_name).exclude(pending_clips=None)
     for node in active_tree_nodes:
-        clip_to_remove, tree_changed = _handle_node_pending_clips(node)
+        clip_to_remove, tree_changed = _handle_node_pending_clips(node, experiment_name)
         if clip_to_remove:
             node.pending_clips.remove(clip_to_remove)
         if tree_changed:  # If the tree changed, we want to stop looping
@@ -163,3 +163,57 @@ def compare(request, experiment_name):
     _sorting_logic(experiment_name)
 
     return respond(request, experiment_name)
+
+def _get_visnodes(node, depth, tree_position, what_kind_of_child_i_am):
+    max_depth = depth
+    results = [{
+        'id': 'visnode%s' % node.id,
+        'bound_clips': [clip.media_url for clip in node.bound_clips.all()],
+        'show_clip': 0,
+        'tree_position': tree_position,  # If the root pos=1, this ranges (0, 2)
+        'depth': depth,
+        'color': 'red' if node.is_red else 'black',
+        'what_kind_of_child_i_am': what_kind_of_child_i_am,
+        'num_bound_clips': len(node.bound_clips.all()),
+        'num_pending_clips': len(node.pending_clips.all()),
+    }]
+    if node.right:
+        right_position = tree_position + (0.5**(depth + 1))
+        sub_visnodes, max_subdepth = _get_visnodes(node.right, depth + 1, right_position, 'right')
+        results += sub_visnodes
+        max_depth = max(max_depth, max_subdepth)
+    if node.left:
+        left_position = tree_position - (0.5**(depth + 1))
+        sub_visnodes, max_subdepth = _get_visnodes(node.left, depth + 1, left_position, 'left')
+        results += sub_visnodes
+        max_depth = max(max_depth, max_subdepth)
+    return results, max_depth
+
+def _set_visnode_position_data(visnodes, max_depth, clip_width):
+    clip_plus_frame_width = clip_width + 20
+    clip_plus_frame_height = clip_width + 116
+    largest_row = 2 ** max_depth
+    total_width = clip_plus_frame_width * largest_row
+    total_height = (max_depth + 1) * clip_plus_frame_height
+    for vn in visnodes:
+        vn['top_edge'] = vn['depth'] * clip_plus_frame_height
+        vn['left_edge'] = total_width * (vn['tree_position'] / 2)
+        vn['x_position'] = vn['left_edge'] + (clip_plus_frame_width / 2)
+        vn['y_position'] = vn['top_edge'] + (clip_plus_frame_height / 2)
+        shift = 0.5 ** vn['depth']  # How much we have to move over in tree_position to get to the parent
+        if vn['what_kind_of_child_i_am'] == "left":
+            vn['parent_x_pos'] = vn['x_position'] + (total_width * (shift / 2))
+            vn['parent_y_pos'] = vn['y_position'] - clip_plus_frame_height
+        elif vn['what_kind_of_child_i_am'] == "right":
+            vn['parent_x_pos'] = vn['x_position'] - (total_width * (shift / 2))
+            vn['parent_y_pos'] = vn['y_position'] - clip_plus_frame_height
+        else:
+            vn['parent_x_pos'] = vn['x_position']
+            vn['parent_y_pos'] = vn['y_position']
+    return total_width, total_height
+
+def tree(request, experiment_name):
+    root = SortTree.objects.get(experiment_name=experiment_name, parent=None)
+    visnodes, max_depth = _get_visnodes(root, depth=0, tree_position=1, what_kind_of_child_i_am=None)
+    dim = _set_visnode_position_data(visnodes, max_depth, 84)
+    return render(request, 'tree.html', context={"tree": visnodes, "total": {"width": dim[0], "height": dim[1]}})
