@@ -172,7 +172,8 @@ def _get_visnodes(node, depth, tree_position, what_kind_of_child_i_am):
         'show_clip': 0,
         'tree_position': tree_position,  # If the root pos=1, this ranges (0, 2)
         'depth': depth,
-        'color': 'red' if node.is_red else 'black',
+        'color': '#A00' if node.is_red else 'black',
+        'text_color': 'white',
         'what_kind_of_child_i_am': what_kind_of_child_i_am,
         'num_bound_clips': len(node.bound_clips.all()),
         'num_pending_clips': len(node.pending_clips.all()),
