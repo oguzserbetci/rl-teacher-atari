@@ -1,3 +1,4 @@
+import random
 from collections import namedtuple
 from datetime import timedelta, datetime
 
@@ -8,6 +9,8 @@ from django.shortcuts import render
 from django.utils import timezone
 
 from human_feedback_api.models import Comparison
+from human_feedback_api.models import SortTree
+from human_feedback_api.models import Clip
 
 register = template.Library()
 
@@ -39,17 +42,21 @@ def _all_comparisons(experiment_name, use_locking=True):
 
     cutoff_time = timezone.now() - timedelta(minutes=2)
     not_in_progress = Q(shown_to_tasker_at__isnull=True) | Q(shown_to_tasker_at__lte=cutoff_time)
-    finished_uploading_media = Q(created_at__lte=datetime.now() - timedelta(seconds=2)) # Give time for upload
+    finished_uploading_media = Q(created_at__lte=datetime.now() - timedelta(seconds=2))  # Give time for upload
     ready = not_responded & not_in_progress & finished_uploading_media
 
     # Sort by priority, then put newest labels first
     return Comparison.objects.filter(ready, experiment_name=experiment_name).order_by('-priority', '-created_at')
 
 def index(request):
-    return render(request, 'index.html', context=dict(
-        experiment_names=[exp for exp in
-            Comparison.objects.order_by().values_list('experiment_name', flat=True).distinct()]
-    ))
+    return render(request, 'index.html', context={
+        'old_experiment_names': [
+            exp for exp in
+            Comparison.objects.order_by().values_list('experiment_name', flat=True).distinct()],
+        'new_experiment_names': [
+            exp for exp in
+            SortTree.objects.filter(parent=None).order_by().values_list('experiment_name', flat=True).distinct()]
+    })
 
 def list_comparisons(request, experiment_name):
     comparisons = Comparison.objects.filter(experiment_name=experiment_name).order_by('responded_at', '-priority')
@@ -80,7 +87,8 @@ def ajax_response(request, experiment_name):
     comparison.save()
 
     comparisons = list(_all_comparisons(experiment_name)[:1])
-    for comparison in comparisons: display_comparison(comparison)
+    for comparison in comparisons:
+        display_comparison(comparison)
     if debug:
         print("{}".format([x.id for x in comparisons]))
         if comparison:
@@ -103,3 +111,31 @@ def respond(request, experiment_name):
         'comparisons': comparisons,
         'experiment': _build_experiment_resource(experiment_name)
     })
+
+# New interface
+def compare(request, experiment_name):
+    # Look to generate comparisons from the tree
+    active_tree_nodes = SortTree.objects.filter(experiment_name=experiment_name).exclude(pending_clips=None)
+    for node in active_tree_nodes:
+        for clip1 in node.pending_clips.all():
+            try:
+                comp = Comparison.objects.get(tree_node=node, media_url_1=clip1.media_url)
+                if comp.response:
+                    print("Response recieved! Update the tree!")
+                # Else: still waiting on response
+            except Comparison.DoesNotExist:
+                clip2 = random.choice(node.bound_clips.all())
+                print("Let's make a comparison between ", clip1, clip1.clip_tracking_id, " and ", clip2, clip2.clip_tracking_id)
+
+                comparison = Comparison(
+                    experiment_name=experiment_name,
+                    media_url_1=clip1.media_url,
+                    media_url_2=clip2.media_url,
+                    response_kind='left_or_right',
+                    priority=1.,
+                    tree_node=node,
+                )
+                comparison.full_clean()
+                comparison.save()
+
+    return respond(request, experiment_name)

@@ -26,6 +26,9 @@ class Comparison(models.Model):
     priority = models.FloatField('site will display higher priority items first', db_index=True)
     note = models.TextField('note to be displayed along with the query', default="", blank=True)
 
+    # The Binary Search/Sort Tree that this comparison belongs to. Only used for new-style experiments.
+    tree_node = models.ForeignKey('SortTree', null=True, default=None)
+
     # Validation
     def full_clean(self, exclude=None, validate_unique=True):
         super(Comparison, self).full_clean(exclude=exclude, validate_unique=validate_unique)
