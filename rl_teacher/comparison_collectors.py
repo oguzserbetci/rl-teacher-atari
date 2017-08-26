@@ -203,6 +203,7 @@ class HumanComparisonCollector(object):
         for pending_result in self._pending_upload_results:
             if pending_result.ready():
                 pending_result.get(timeout=60)
+        self._pending_upload_results = [r for r in self._pending_upload_results if not r.ready()]
 
     def invent_comparison(self):
         # TODO: Make this intelligent!

@@ -16,7 +16,7 @@ def _left_rotate(x):
             x.parent.set_left(y)
         else:
             x.parent.set_right(y)
-    else:
+    else:  # y becomes new root
         y.parent = None
         y.save()
     y.set_left(x)
@@ -32,7 +32,7 @@ def _right_rotate(x):
             x.parent.set_left(y)
         else:
             x.parent.set_right(y)
-    else:
+    else:  # y becomes new root
         y.parent = None
         y.save()
     y.set_right(x)

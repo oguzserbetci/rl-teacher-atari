@@ -42,10 +42,13 @@ def _build_experiment_resource(experiment_name):
 def _all_comparisons(experiment_name, use_locking=True):
     not_responded = Q(responded_at__isnull=True)
 
-    cutoff_time = timezone.now() - timedelta(minutes=2)
-    not_in_progress = Q(shown_to_tasker_at__isnull=True) | Q(shown_to_tasker_at__lte=cutoff_time)
-    finished_uploading_media = Q(created_at__lte=datetime.now() - timedelta(seconds=2))  # Give time for upload
-    ready = not_responded & not_in_progress & finished_uploading_media
+    if use_locking:
+        cutoff_time = timezone.now() - timedelta(minutes=2)
+        not_in_progress = Q(shown_to_tasker_at__isnull=True) | Q(shown_to_tasker_at__lte=cutoff_time)
+        finished_uploading_media = Q(created_at__lte=datetime.now() - timedelta(seconds=2))  # Give time for upload
+        ready = not_responded & not_in_progress & finished_uploading_media
+    else:
+        ready = not_responded
 
     # Sort by priority, then put newest labels first
     return Comparison.objects.filter(ready, experiment_name=experiment_name).order_by('-priority', '-created_at')
@@ -88,6 +91,9 @@ def ajax_response(request, experiment_name):
     comparison.full_clean()  # Validation
     comparison.save()
 
+    # If this comparison belongs to a sorting tree, run the tree logic...
+    _sorting_logic(experiment_name)
+
     comparisons = list(_all_comparisons(experiment_name)[:1])
     for comparison in comparisons:
         display_comparison(comparison)
@@ -114,8 +120,12 @@ def respond(request, experiment_name):
         'experiment': _build_experiment_resource(experiment_name)
     })
 
+def all_clips(request, environment_id):
+    return render(request, 'all_clips.html', context={"clips": Clip.objects.filter(environment_id=environment_id)})
+
 # New interface
 def _handle_node_pending_clips(node, experiment_name):
+    any_comparisons = len(Comparison.objects.filter(tree_node=node, response=None)) > 0
     for clip1 in node.pending_clips.all():
         try:
             comp = Comparison.objects.get(tree_node=node, media_url_1=clip1.media_url)
@@ -126,38 +136,46 @@ def _handle_node_pending_clips(node, experiment_name):
                     # In the redblack tree, left-nodes are worse, and right-nodes are better.
                     # Since clip1 is the left clip, we want to move it left in the tree if the user says "right".
                     is_worse = (comp.response == "right")
-                    tree_changed = redblack.move_clip_down(node, clip1, is_worse)
-                    return clip1, tree_changed
+                    redblack.move_clip_down(node, clip1, is_worse)
+                    return clip1
                 else:  # Assume tie
                     node.bound_clips.add(clip1)
-                    return clip1, False
+                    return clip1
             # else:
             #    still waiting on response for this comparison
         except Comparison.DoesNotExist:
-            clip2 = random.choice(node.bound_clips.all())
-            print("Let's make a comparison between", clip1, clip1.clip_tracking_id, "and", clip2, clip2.clip_tracking_id)
+            if not any_comparisons:
+                clip2 = random.choice(node.bound_clips.all())
+                print("Let's make a comparison between", clip1, clip1.clip_tracking_id, "and", clip2, clip2.clip_tracking_id)
 
-            comparison = Comparison(
-                experiment_name=experiment_name,
-                media_url_1=clip1.media_url,
-                media_url_2=clip2.media_url,
-                response_kind='left_or_right',
-                priority=1.,
-                tree_node=node,
-            )
-            comparison.full_clean()
-            comparison.save()
-    return None, False
+                comparison = Comparison(
+                    experiment_name=experiment_name,
+                    media_url_1=clip1.media_url,
+                    media_url_2=clip2.media_url,
+                    response_kind='left_or_right',
+                    priority=1.,
+                    tree_node=node,
+                )
+                comparison.full_clean()
+                comparison.save()
+                any_comparisons = True
+                return None
+    return None
 
 def _sorting_logic(experiment_name):
-    # Look to generate comparisons from the tree
-    active_tree_nodes = SortTree.objects.filter(experiment_name=experiment_name).exclude(pending_clips=None)
-    for node in active_tree_nodes:
-        clip_to_remove, tree_changed = _handle_node_pending_clips(node, experiment_name)
-        if clip_to_remove:
-            node.pending_clips.remove(clip_to_remove)
-        if tree_changed:  # If the tree changed, we want to stop looping
-            break
+    run_logic = True
+    while run_logic:
+        run_logic = False
+        # Look to generate comparisons from the tree
+        active_tree_nodes = SortTree.objects.filter(experiment_name=experiment_name).exclude(pending_clips=None)
+        for node in active_tree_nodes:
+            clip_to_remove = _handle_node_pending_clips(node, experiment_name)
+            if clip_to_remove:
+                node.pending_clips.remove(clip_to_remove)
+                # If a clip was sorted, we want to stop looping and run the logic over from the start
+                # This helps generate comparisons as soon as they're available and avoid concurrent sort bugs
+                run_logic = True
+                break
 
 def compare(request, experiment_name):
     _sorting_logic(experiment_name)

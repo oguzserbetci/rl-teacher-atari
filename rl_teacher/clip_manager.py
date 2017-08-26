@@ -3,6 +3,8 @@ import multiprocessing
 import pickle
 from time import sleep
 
+import numpy as np
+
 from rl_teacher.video import write_segment_to_video, upload_to_gcs
 
 def _write_and_upload_video(clip, clip_id, source, render_full_obs, fps, gcs_path, video_local_path, clip_local_path):
@@ -11,6 +13,21 @@ def _write_and_upload_video(clip, clip_id, source, render_full_obs, fps, gcs_pat
     write_segment_to_video(clip, fname=video_local_path, render_full_obs=render_full_obs, fps=fps)
     upload_to_gcs(video_local_path, gcs_path)
     return clip_id, source
+
+def _tree_minimum(node):
+    while node.left:
+        node = node.left
+    return node
+
+def _tree_successor(node):
+    # If we can descend, do the minimal descent
+    if node.right:
+        return _tree_minimum(node.right)
+    # Else backtrack to either the root or the nearest point where descent is possible
+    while node.parent and node == node.parent.right:
+        node = node.parent
+    # If we've backtracked to the root return None, else node.parent will be successor
+    return node.parent
 
 class ClipManager(object):
     """Saves/loads clips from disk, gets new ones from teacher, and syncs everything up with the database"""
@@ -25,6 +42,7 @@ class ClipManager(object):
         self._upload_workers = multiprocessing.Pool(workers)
         self._pending_upload_results = []
 
+        self._sorted_clips = []  # List of lists of clip_ids
         self._clips = {}
         # Load clips from database and disk
         from human_feedback_api import Clip
@@ -48,6 +66,7 @@ class ClipManager(object):
         for clip_id in self._clips:
             os.remove(self._pickle_path(clip_id))
 
+        self._sorted_clips = []
         self._clips = {}
         self._max_clip_id = 0
 
@@ -107,13 +126,41 @@ class ClipManager(object):
             if pending_result.ready():
                 uploaded_clip_id, uploaded_clip_source = pending_result.get(timeout=60)
                 self._add_to_database(uploaded_clip_id, uploaded_clip_source)
+        self._pending_upload_results = [r for r in self._pending_upload_results if not r.ready()]
 
-    def sort_clips(self, wait_until_database_sorted=False):
-        if wait_until_database_sorted:
+    @property
+    def total_number_of_clips(self):
+        return len(self._clips)
+
+    @property
+    def number_of_sorted_clips(self):
+        return sum([len(self._sorted_clips[i]) for i in range(len(self._sorted_clips))])
+
+    @property
+    def maximum_ordinal(self):
+        return len(self._sorted_clips) - 1
+
+    def sort_clips(self, wait_until_database_fully_sorted=False):
+        from human_feedback_api import SortTree
+        if wait_until_database_fully_sorted:
             print("Waiting until all clips in the database are sorted...")
-            while True:
+            while self._pending_upload_results or SortTree.objects.get(experiment_name=self.experiment_name, pending_clips=None):
                 self._check_pending_uploads()
                 sleep(10)
+            print("Okay! The database seems to be sorted!")
+        sorted_clips = []
+        node = _tree_minimum(SortTree.objects.get(experiment_name=self.experiment_name, parent=None))
+        while node:
+            sorted_clips.append([x.clip_tracking_id for x in node.bound_clips.all()])
+            node = _tree_successor(node)
+        self._sorted_clips = sorted_clips
+
+    def sample_sorted_clips(self, batch_size):
+        clip_ids_with_ordinals = []
+        for ordinal in range(len(self._sorted_clips)):
+            clip_ids_with_ordinals += [{'id': clip_id, 'ord': ordinal} for clip_id in self._sorted_clips[ordinal]]
+        sample = np.random.choice(clip_ids_with_ordinals, batch_size, replace=False)
+        return [self._clips[item['id']] for item in sample], [item['ord'] for item in sample]
 
     def _video_filename(self, clip_id):
         return "%s-%s.mp4" % (self.experiment_name, clip_id)

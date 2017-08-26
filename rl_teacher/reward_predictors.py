@@ -134,13 +134,13 @@ class ChironRewardModel(object):
                 self.act_placeholder: np.asarray([path["actions"]]),
                 K.learning_phase(): False
             })
-        return predicted_rewards[0]
+        return predicted_rewards[0]  # The zero here is to get the single returned path.
 
     def path_callback(self, path):
         self._episode_count += 1
 
         # We may be in a new part of the environment, so we take a clip to learn from if requested
-        if len(self.clip_manager.total_clips) < self.label_schedule.n_desired_labels:  # TODO: Change "labels" to clips!
+        if self.clip_manager.total_number_of_clips < self.label_schedule.n_desired_labels:  # TODO: Change "labels" to clips!
             new_clip = sample_segment_from_path(path, int(self._frames_per_segment))
             if new_clip:
                 self.clip_manager.add(new_clip, source="on-policy callback")
@@ -163,7 +163,7 @@ class ChironRewardModel(object):
         first_clip = basic_segment_from_null_action(env_id, make_env, clip_length, stacked_frames)
 
         random_clips = segments_from_rand_rollout(
-            env_id, make_env, n_desired_segments=n_pretrain_clips,
+            env_id, make_env, n_desired_segments=n_pretrain_clips - 1,
             clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
 
         # Add the null-action clip first, so the root is valid.
@@ -172,13 +172,13 @@ class ChironRewardModel(object):
         for clip in random_clips:
             self.clip_manager.add(clip, source="random rollout")
 
-        self.clip_manager.sort_clips(wait_until_database_sorted=True)
+        self.clip_manager.sort_clips(wait_until_database_fully_sorted=True)
 
     def get_training_batch(self):
         """ Get a batch of training data from the clip manager """
         self.clip_manager.sort_clips()
 
-        batch_size = min(128, self.clip_manager.number_of_sorted_clips())
+        batch_size = min(128, self.clip_manager.number_of_sorted_clips)
         clips, ordinals = self.clip_manager.sample_sorted_clips(batch_size)
 
         obs = [clip['obs'] for clip in clips]

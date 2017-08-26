@@ -102,10 +102,6 @@ def main():
             env_id, make_env, n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
         pretrain_predictor(predictor, args.pretrain_iters)
 
-    print("Done with pretraining!")
-    print("Stopping")
-    return
-
     # Wrap the predictor to capture videos every so often:
     if not args.no_videos:
         video_path = os.path.join('/tmp/rl_teacher_vids', run_name)
