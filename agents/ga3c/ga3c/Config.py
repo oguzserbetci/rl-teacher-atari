@@ -37,6 +37,9 @@ class Config:
     # Function used to make the game environment. Takes game name as its only parameter.
     MAKE_ENV_FUNCTION = gym.make
 
+    # If truthy, the agent will take random actions after this many steps in the environment.
+    RANDOM_ACT_THRESHOLD = None
+
     # Enable to see the trained agent in action
     PLAY_MODE = False
     # Enable to train
