@@ -44,10 +44,10 @@ def export_video(frames, fname, fps=10):
     encoder.close()
 
 class SegmentVideoRecorder(object):
-    """ Wraps a reward predictor's path_callback to regularly save a video to disk every so often. """
+    """ Wraps a reward model's path_callback to regularly save a video to disk every so often. """
 
-    def __init__(self, predictor, env, save_dir, checkpoint_interval=500):
-        self.predictor = predictor
+    def __init__(self, model, env, save_dir, checkpoint_interval=500):
+        self.model = model
         self.env = env
         self.checkpoint_interval = checkpoint_interval
         self.save_dir = save_dir
@@ -61,10 +61,10 @@ class SegmentVideoRecorder(object):
             write_segment_to_video(path, fname, self.env.render_full_obs, self.env.fps)
         self._num_paths_seen += 1
 
-        self.predictor.path_callback(path)
+        self.model.path_callback(path)
 
     def predict_reward(self, path):
-        return self.predictor.predict_reward(path)
+        return self.model.predict_reward(path)
 
 class ImageEncoder(object):
     """ Wrapper around a video encoding, command-line utility. """

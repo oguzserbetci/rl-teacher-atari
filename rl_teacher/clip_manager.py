@@ -42,7 +42,6 @@ class ClipManager(object):
         self._upload_workers = multiprocessing.Pool(workers)
         self._pending_upload_results = []
 
-        self._sorted_clips = []  # List of lists of clip_ids
         self._clips = {}
         # Load clips from database and disk
         from human_feedback_api import Clip
@@ -52,7 +51,25 @@ class ClipManager(object):
                 self._clips[clip_id] = pickle.load(open(self._pickle_path(clip_id), 'rb'))
             except FileNotFoundError:
                 pass
+            except Exception:
+                print("Exception occurred when loading clip %s" % clip_id)
+                if input("Do you want to erase this clip? (y/n)\n").startswith('y'):
+                    print("Erasing clip from disk...")
+                    os.remove(self._pickle_path(clip_id))
+                    print("Erasing clip and all related data from database...")
+                    clip.delete()
+                    print("Warning: There's a chance that this simply invalidates the sort-tree. Check the human feedback api /tree/experiment_name for any experiments involving this clip.")
+                    from human_feedback_api import Comparison
+                    Comparison.objects.filter(media_url_1=clip.media_url).delete()
+                    Comparison.objects.filter(media_url_2=clip.media_url).delete()
+                    print("Invalid data deleted.\nMoving on...")
+                else:
+                    raise
         self._max_clip_id = max(self._clips.keys()) if self._clips else 0
+
+        self._sorted_clips = []  # List of lists of clip_ids
+        self.sort_clips()
+
         # Report
         if len(self._clips) < 1:
             print("Starting fresh!")
@@ -144,23 +161,26 @@ class ClipManager(object):
         from human_feedback_api import SortTree
         if wait_until_database_fully_sorted:
             print("Waiting until all clips in the database are sorted...")
-            while self._pending_upload_results or SortTree.objects.get(experiment_name=self.experiment_name, pending_clips=None):
+            while self._pending_upload_results or SortTree.objects.filter(experiment_name=self.experiment_name).exclude(pending_clips=None):
                 self._check_pending_uploads()
                 sleep(10)
             print("Okay! The database seems to be sorted!")
         sorted_clips = []
-        node = _tree_minimum(SortTree.objects.get(experiment_name=self.experiment_name, parent=None))
-        while node:
-            sorted_clips.append([x.clip_tracking_id for x in node.bound_clips.all()])
-            node = _tree_successor(node)
+        try:
+            node = _tree_minimum(SortTree.objects.get(experiment_name=self.experiment_name, parent=None))
+            while node:
+                sorted_clips.append([x.clip_tracking_id for x in node.bound_clips.all()])
+                node = _tree_successor(node)
+        except SortTree.DoesNotExist:
+            pass  # Root hasn't been created.
         self._sorted_clips = sorted_clips
 
-    def sample_sorted_clips(self, batch_size):
+    def get_sorted_clips(self, *, batch_size=None):
         clip_ids_with_ordinals = []
         for ordinal in range(len(self._sorted_clips)):
             clip_ids_with_ordinals += [{'id': clip_id, 'ord': ordinal} for clip_id in self._sorted_clips[ordinal]]
-        sample = np.random.choice(clip_ids_with_ordinals, batch_size, replace=False)
-        return [self._clips[item['id']] for item in sample], [item['ord'] for item in sample]
+        sample = np.random.choice(clip_ids_with_ordinals, batch_size, replace=False) if batch_size else clip_ids_with_ordinals
+        return [item['id'] for item in sample], [self._clips[item['id']] for item in sample], [item['ord'] for item in sample]
 
     def _video_filename(self, clip_id):
         return "%s-%s.mp4" % (self.experiment_name, clip_id)

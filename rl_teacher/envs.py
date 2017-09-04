@@ -47,8 +47,9 @@ def task_by_name(name, original_name=None, short=False):
                     # Basic start:
                     [],
                     # Start at the base of the ladder in the bottom right of starting room:
-                    [11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11,
-                     0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]]
+                    # [11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11,
+                    # 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+                ]
                 env = RandomStartPoint(env, nav_to_start_commands)
                 env = DoneOnLivesBelowThreshold(env, 5)
 

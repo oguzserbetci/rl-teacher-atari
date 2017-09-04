@@ -38,44 +38,52 @@ def nn_predict_rewards(obs_segments, act_segments, network, obs_shape, act_shape
     # Group the rewards back into their segments
     return tf.reshape(rewards, (batchsize, segment_length))
 
-class TraditionalRLRewardPredictor(object):
-    """Predictor that always returns the true reward provided by the environment."""
+class RewardModel(object):
+    is_fresh = False  # Set this to true to generate pretraining data by default.
 
-    def __init__(self, summary_writer):
-        self.agent_logger = AgentLogger(summary_writer)
+    def predict_reward(self, path):
+        raise NotImplementedError()  # Must be overridden
+
+    def path_callback(self, path):
+        pass  # Defaults to no behavior
+
+    def reset_training_data(self, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
+        pass  # No training data by default
+
+    def train(self, iterations=1, report_frequency=None):
+        pass  # Doesn't require training by default
+
+    def save_model_checkpoint(self):
+        pass  # Nothing to save
+
+    def load_model_from_checkpoint(self):
+        raise NotImplementedError()
+
+class OriginalEnvironmentReward(RewardModel):
+    """Model that always gives the reward provided by the environment."""
 
     def predict_reward(self, path):
         return path["original_rewards"]
 
-    def path_callback(self, path):
-        pass
-
-    def reset_training_data(self, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
-        pass  # No training data
-
-    def train_predictor(self):
-        pass  # Doesn't require training
-
-    def load_model_from_checkpoint(self):
-        pass  # There's no model
-
-class ChironRewardModel(object):
+class ChironRewardModel(RewardModel):
     """A learned model of an environmental reward using training data that is merely sorted."""
 
     def __init__(self, env, experiment_name, label_schedule, clip_length, stacked_frames, workers):
         self.clip_manager = ClipManager(env, experiment_name, workers)
+        self.is_fresh = self.clip_manager.total_number_of_clips == 0
 
         self.label_schedule = label_schedule
         self.experiment_name = experiment_name
         self._frames_per_segment = clip_length * env.fps
-        # The reward distribution has sigma such that each frame of a clip has expected reward 1
+        # The reward distribution has standard dev such that each frame of a clip has expected reward 1
         self._standard_deviation = self._frames_per_segment
-        self._elapsed_predictor_training_iters = 0
+        self._elapsed_training_iters = 0
         self._episode_count = 0
-        self._episodes_per_training = 2
-        self._episodes_per_checkpoint = 200
+        self._episodes_per_training = 50
+        self._iterations_per_training = 50
+        self._episodes_per_checkpoint = 100
 
-        # Build and initialize our predictor model
+        # Build and initialize our model
         config = tf.ConfigProto(
             # device_count={'GPU': 0},
             # log_device_placement=True,
@@ -115,14 +123,13 @@ class ChironRewardModel(object):
 
         # We use trajectory segments rather than individual (state, action) pairs because
         # video clips of segments are easier for humans to evaluate
-        segment_rewards = tf.reduce_sum(self.rewards, axis=1)
+        self.segment_rewards = tf.reduce_sum(self.rewards, axis=1)
 
         self.targets = tf.placeholder(dtype=tf.float32, shape=(None,), name="reward_targets")
 
-        self.loss = tf.reduce_mean(tf.square(self.targets - segment_rewards))
+        self.loss = tf.reduce_mean(tf.square(self.targets - self.segment_rewards))
 
-        global_step = tf.Variable(0, name='global_step', trainable=False)
-        self.train_op = tf.train.AdamOptimizer().minimize(self.loss, global_step=global_step)
+        self.train_op = tf.train.AdamOptimizer().minimize(self.loss)
 
         return tf.get_default_graph()
 
@@ -147,12 +154,11 @@ class ChironRewardModel(object):
 
         # Train our model every X episodes
         if self._episode_count % self._episodes_per_training == 0:
-            self.train_predictor()
+            self.train(iterations=self._iterations_per_training, report_frequency=25)
 
-        # Save our predictor every X steps
+        # Save our model every X steps
         if self._episode_count % self._episodes_per_checkpoint == 0:
-            print("Saving reward model checkpoint!")
-            self.saver.save(self.sess, self._checkpoint_filename())
+            self.save_model_checkpoint()
 
     def reset_training_data(self, env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers):
         self.clip_manager.clear_old_data()
@@ -174,55 +180,77 @@ class ChironRewardModel(object):
 
         self.clip_manager.sort_clips(wait_until_database_fully_sorted=True)
 
-    def get_training_batch(self):
-        """ Get a batch of training data from the clip manager """
-        self.clip_manager.sort_clips()
-
-        batch_size = min(128, self.clip_manager.number_of_sorted_clips)
-        clips, ordinals = self.clip_manager.sample_sorted_clips(batch_size)
-
-        obs = [clip['obs'] for clip in clips]
-        acts = [clip['actions'] for clip in clips]
-
-        # Here is where the magic happens.
-        # We project the ordinal information into a cardinal value to use as a reward.
+    def calculate_targets(self, ordinals):
+        """ Project ordinal information into a cardinal value to use as a reward target """
         max_ordinal = self.clip_manager.maximum_ordinal  # Equivalent to the size of the sorting tree
         step_size = 1.0 / (max_ordinal + 1)
         offset = step_size / 2
         targets = [self._standard_deviation * stats.norm.ppf(offset + (step_size * o)) for o in ordinals]
+        return targets
 
-        return obs, acts, targets
+    def train(self, iterations=1, report_frequency=None):
+        self.clip_manager.sort_clips()
+        # batch_size = min(128, self.clip_manager.number_of_sorted_clips)
+        _, clips, ordinals = self.clip_manager.get_sorted_clips()  # batch_size=batch_size
 
-    def train_predictor(self):
-        obs, acts, targets = self.get_training_batch()
+        obs = [clip['obs'] for clip in clips]
+        acts = [clip['actions'] for clip in clips]
+        targets = self.calculate_targets(ordinals)
 
         with self.graph.as_default():
-            _, loss = self.sess.run([self.train_op, self.loss], feed_dict={
-                self.obs_placeholder: np.asarray(obs),
-                self.act_placeholder: np.asarray(acts),
-                self.targets: np.asarray(targets),
-                K.learning_phase(): True
-            })
-            self._elapsed_predictor_training_iters += 1
-            print("Training iter %s: error = %s" % (self._elapsed_predictor_training_iters, loss))
+            for i in range(1, iterations + 1):
+                _, loss = self.sess.run([self.train_op, self.loss], feed_dict={
+                    self.obs_placeholder: np.asarray(obs),
+                    self.act_placeholder: np.asarray(acts),
+                    self.targets: np.asarray(targets),
+                    K.learning_phase(): True
+                })
+                self._elapsed_training_iters += 1
+                if report_frequency and i % report_frequency == 0:
+                    print("%s/%s reward model training iters. (Err: %s)" % (i, iterations, loss))
+                elif iterations == 1:
+                    print("Reward model training iter %s (Err: %s)" % (self._elapsed_training_iters, loss))
 
     def _checkpoint_filename(self):
         return 'checkpoints/reward_model/%s/treesave' % (self.experiment_name)
 
+    def save_model_checkpoint(self):
+        print("Saving reward model checkpoint!")
+        self.saver.save(self.sess, self._checkpoint_filename())
+
     def load_model_from_checkpoint(self):
         filename = tf.train.latest_checkpoint(os.path.dirname(self._checkpoint_filename()))
         self.saver.restore(self.sess, filename)
+        # Dump model outputs with errors
+        if True:  # <-- Toggle testing with this
+            with self.graph.as_default():
+                clip_ids, clips, ordinals = self.clip_manager.get_sorted_clips()
+                targets = self.calculate_targets(ordinals)
+                for i in range(len(clips)):
+                    predicted_rewards = self.sess.run(self.rewards, feed_dict={
+                        self.obs_placeholder: np.asarray([clips[i]["obs"]]),
+                        self.act_placeholder: np.asarray([clips[i]["actions"]]),
+                        K.learning_phase(): False
+                    })[0]
+                    reward_sum = sum(predicted_rewards)
+                    starting_reward = predicted_rewards[0]
+                    ending_reward = predicted_rewards[-1]
+                    print(
+                        "Clip {: 3d}: predicted = {: 5.2f} | target = {: 5.2f} | error = {: 5.2f} | start = {: 5.2f} | end = {: 5.2f}"
+                        .format(clip_ids[i], reward_sum, targets[i], reward_sum - targets[i], starting_reward, ending_reward))
 
-class ComparisonRewardPredictor(object):
-    """Predictor that trains a model to predict how much reward is contained in a trajectory segment"""
+class ComparisonRewardModel(RewardModel):
+    """A model that attempts to match labeling performance on a collection of comparisons."""
 
-    def __init__(self, env, experiment_name, summary_writer, predictor_type, agent_logger, label_schedule, clip_length, stacked_frames):
-        if predictor_type == "synth":
+    def __init__(self, env, experiment_name, summary_writer, model_type, agent_logger, label_schedule, clip_length, stacked_frames):
+        if model_type == "synth":
             self.comparison_collector = SyntheticComparisonCollector()
-        elif predictor_type == "human":
+        elif model_type == "human":
             self.comparison_collector = HumanComparisonCollector(env, experiment_name=experiment_name)
         else:
-            raise ValueError("Bad value for --predictor: %s" % predictor_type)
+            raise ValueError("Cannot find comparison collector from keyword \"%s\"" % model_type)
+
+        self.is_fresh = len(self.comparison_collector) == 0
 
         self.summary_writer = summary_writer
         self.agent_logger = agent_logger
@@ -233,12 +261,12 @@ class ComparisonRewardPredictor(object):
         self._frames_per_segment = clip_length * env.fps
         self._steps_since_last_training = 0
         self._steps_since_last_checkpoint = 0
-        self._n_timesteps_per_predictor_training = 2e3  # How often should we train our predictor?
+        self._n_timesteps_per_model_training = 2e3  # How often should we train our model?
         self._n_timesteps_per_checkpoint = 2e4  # How often should we save our model
-        self._elapsed_predictor_training_iters = 0
+        self._elapsed_model_training_iters = 0
         self._num_checkpoints = 0
 
-        # Build and initialize our predictor model
+        # Build and initialize our model
         config = tf.ConfigProto(
             # device_count={'GPU': 0},
             # log_device_placement=True,
@@ -344,16 +372,14 @@ class ComparisonRewardPredictor(object):
         if len(self.comparison_collector) < self.label_schedule.n_desired_labels:
             self.comparison_collector.invent_comparison()
 
-        # Train our predictor every X steps
-        if self._steps_since_last_training >= self._n_timesteps_per_predictor_training:
-            self.train_predictor()
+        # Train our model every X steps
+        if self._steps_since_last_training >= self._n_timesteps_per_model_training:
+            self.train()
             self._steps_since_last_training = 0
 
-        # Save our predictor every X steps
+        # Save our model every X steps
         if self._steps_since_last_checkpoint >= self._n_timesteps_per_checkpoint:
-            print("Saving reward model checkpoint!")
-            self._num_checkpoints += 1
-            self.saver.save(self.sess, self._checkpoint_filename())
+            self.save_model_checkpoint()
             self._steps_since_last_checkpoint = 0
 
     def reset_training_data(self, env_id, make_env, n_pretrain_labels, clip_length, stacked_frames, workers):
@@ -376,38 +402,47 @@ class ComparisonRewardPredictor(object):
     def _checkpoint_filename(self):
         return 'checkpoints/reward_model/%s/%08d' % (self.experiment_name, self._num_checkpoints)
 
+    def save_model_checkpoint(self):
+        print("Saving reward model checkpoint!")
+        self._num_checkpoints += 1
+        self.saver.save(self.sess, self._checkpoint_filename())
+
     def load_model_from_checkpoint(self):
         filename = tf.train.latest_checkpoint(os.path.dirname(self._checkpoint_filename()))
         self.saver.restore(self.sess, filename)
 
-    def train_predictor(self):
+    def train(self, iterations=1, report_frequency=None):
         self.comparison_collector.label_unlabeled_comparisons()
 
-        minibatch_size = min(128, len(self.comparison_collector.labeled_decisive_comparisons))
-        comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
-        left_segs = [self.comparison_collector.get_segment(comp['left']) for comp in comparisons]
-        right_segs = [self.comparison_collector.get_segment(comp['right']) for comp in comparisons]
+        for i in range(1, iterations + 1):
+            minibatch_size = min(128, len(self.comparison_collector.labeled_decisive_comparisons))
+            comparisons = random.sample(self.comparison_collector.labeled_decisive_comparisons, minibatch_size)
+            left_segs = [self.comparison_collector.get_segment(comp['left']) for comp in comparisons]
+            right_segs = [self.comparison_collector.get_segment(comp['right']) for comp in comparisons]
 
-        left_obs = np.asarray([left['obs'] for left in left_segs])
-        left_acts = np.asarray([left['actions'] for left in left_segs])
-        right_obs = np.asarray([right['obs'] for right in right_segs])
-        right_acts = np.asarray([right['actions'] for right in right_segs])
-        labels = np.asarray([comp['label'] for comp in comparisons])
+            left_obs = np.asarray([left['obs'] for left in left_segs])
+            left_acts = np.asarray([left['actions'] for left in left_segs])
+            right_obs = np.asarray([right['obs'] for right in right_segs])
+            right_acts = np.asarray([right['actions'] for right in right_segs])
+            labels = np.asarray([comp['label'] for comp in comparisons])
 
-        with self.graph.as_default():
-            _, loss = self.sess.run([self.train_op, self.loss_op], feed_dict={
-                self.segment_obs_placeholder: left_obs,
-                self.segment_act_placeholder: left_acts,
-                self.segment_alt_obs_placeholder: right_obs,
-                self.segment_alt_act_placeholder: right_acts,
-                self.labels: labels,
-                K.learning_phase(): True
-            })
-            self._elapsed_predictor_training_iters += 1
-            self._write_training_summaries(loss)
+            with self.graph.as_default():
+                _, loss = self.sess.run([self.train_op, self.loss_op], feed_dict={
+                    self.segment_obs_placeholder: left_obs,
+                    self.segment_act_placeholder: left_acts,
+                    self.segment_alt_obs_placeholder: right_obs,
+                    self.segment_alt_act_placeholder: right_acts,
+                    self.labels: labels,
+                    K.learning_phase(): True
+                })
+                self._elapsed_model_training_iters += 1
+                self._write_training_summaries(loss)
+
+            if report_frequency and i % report_frequency == 0:
+                print("%s/%s reward model training iters... " % (i, iterations))
 
     def _write_training_summaries(self, loss):
-        self.agent_logger.log_simple("predictor/loss", loss)
+        self.agent_logger.log_simple("reward_model/loss", loss)
 
         # Calculate correlation between true and predicted reward by running validation on recent episodes
         recent_paths = self.agent_logger.get_recent_paths_with_padding()
@@ -422,9 +457,9 @@ class ComparisonRewardPredictor(object):
             ep_reward_pred = np.sum(q_value, axis=1)
             reward_true = np.asarray([path['original_rewards'] for path in recent_paths])
             ep_reward_true = np.sum(reward_true, axis=1)
-            self.agent_logger.log_simple("predictor/correlations", corrcoef(ep_reward_true, ep_reward_pred))
+            self.agent_logger.log_simple("reward_model/correlations", corrcoef(ep_reward_true, ep_reward_pred))
 
-        self.agent_logger.log_simple("predictor/num_training_iters", self._elapsed_predictor_training_iters)
+        self.agent_logger.log_simple("reward_model/num_training_iters", self._elapsed_model_training_iters)
         self.agent_logger.log_simple("labels/desired_labels", self.label_schedule.n_desired_labels)
         self.agent_logger.log_simple("labels/total_comparisons", len(self.comparison_collector))
         self.agent_logger.log_simple(
