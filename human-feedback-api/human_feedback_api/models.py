@@ -28,6 +28,8 @@ class Comparison(models.Model):
 
     # The Binary Search/Sort Tree that this comparison belongs to. Only used for new-style experiments.
     tree_node = models.ForeignKey('SortTree', null=True, blank=True, default=None)
+    # Whether this comparison is related to a pending clip for said node. Helper used for new-style experiments.
+    relevant_to_pending_clip = models.BooleanField(default=False)
 
     # Validation
     def full_clean(self, exclude=None, validate_unique=True):

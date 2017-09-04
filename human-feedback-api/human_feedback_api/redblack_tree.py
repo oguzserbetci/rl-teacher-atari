@@ -1,4 +1,8 @@
-from human_feedback_api.models import SortTree
+from human_feedback_api.models import SortTree, Comparison
+
+# See https://en.wikipedia.org/wiki/Tree_rotation
+# and https://github.com/headius/redblack
+# and https://www.cs.auckland.ac.nz/software/AlgAnim/red_black.html
 
 def _root(tree):
     while tree.parent:
@@ -7,8 +11,6 @@ def _root(tree):
 
 def _left_rotate(x):
     """ Does a left tree-rotation around node x. """
-    # See https://en.wikipedia.org/wiki/Tree_rotation
-    # Logic drawn from https://github.com/headius/redblack
     y = x.right
     x.set_right(y.left)
     if x.parent:
@@ -23,8 +25,6 @@ def _left_rotate(x):
 
 def _right_rotate(x):
     """ Does a right tree-rotation around node x. """
-    # See https://en.wikipedia.org/wiki/Tree_rotation
-    # Logic drawn from https://github.com/headius/redblack
     y = x.left
     x.set_left(y.right)
     if x.parent:
@@ -37,9 +37,8 @@ def _right_rotate(x):
         y.save()
     y.set_right(x)
 
-def _rebalance_tree(new_node):
+def rebalance_tree(new_node):
     """ Rebalances a redblack tree after adding a node. """
-    # Logic drawn from https://github.com/headius/redblack
     node = new_node
     while node.parent and node.parent.is_red:
         # Note: Since the root to the tree is always black, node must have a grandparent.
@@ -60,7 +59,7 @@ def _rebalance_tree(new_node):
         else:  # node's parent is a right-child
             uncle = node.parent.parent.left
             if uncle and uncle.is_red:
-                node.parent.make_black
+                node.parent.make_black()
                 uncle.make_black()
                 node.parent.parent.make_red()
                 node = node.parent.parent
@@ -73,32 +72,32 @@ def _rebalance_tree(new_node):
                 _left_rotate(node.parent.parent)
     _root(node).make_black()
 
-def move_clip_down(base_node, clip, move_left):
+class NewNodeNeeded(Exception):
+    def __init__(self, moving_left):
+        self.on_the_left = moving_left
+
+def move_clip_down(base_node, clip, comparison_response):
     """
-    Moves a given clip to a lower node the the redblack search/sort tree and rebalances.
-    Returns true if the tree changes as a result of the clip moving.
+    Moves a given clip to a lower node the the redblack search/sort tree.
+    If possible it recursively moves the clip multiple steps down, but usually just goes one step.
+    Raises NewNodeNeeded if it hits the bottom of the tree.
     """
+    # Okay, this is a little bit weird. Sorry for the awkwardness.
+    # When the user responds "left" they're saying that the left clip is BETTER
+    # In the redblack tree, left-nodes are worse, and right-nodes are better.
+    # Since clip1 is the left clip, we want to move it left in the tree if the user says "right".
+    move_left = (comparison_response == "right")
     if move_left and base_node.left:
-        base_node.left.pending_clips.add(clip)
-        return False
-    elif (not move_left) and base_node.right:
-        base_node.right.pending_clips.add(clip)
-        return False
-    else:
-        # We have to add a new node to the tree!
-        new_node = SortTree(
-            experiment_name=base_node.experiment_name,
-            is_red=True,
-            parent=base_node,
-        )
-        new_node.save()
-        new_node.bound_clips.add(clip)
-        if move_left:
-            base_node.left = new_node
+        comparisons = Comparison.objects.filter(tree_node=base_node.left, media_url_1=clip.media_url).exclude(response=None)
+        if comparisons:
+            move_clip_down(base_node.left, clip, comparisons[0].response)
         else:
-            base_node.right = new_node
-        base_node.save()
-
-        _rebalance_tree(new_node)
-
-        return True
+            base_node.left.pending_clips.add(clip)
+    elif (not move_left) and base_node.right:
+        comparisons = Comparison.objects.filter(tree_node=base_node.right, media_url_1=clip.media_url).exclude(response=None)
+        if comparisons:
+            move_clip_down(base_node.right, clip, comparisons[0].response)
+        else:
+            base_node.right.pending_clips.add(clip)
+    else:
+        raise NewNodeNeeded(move_left)

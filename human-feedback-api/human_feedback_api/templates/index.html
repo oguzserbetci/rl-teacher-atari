@@ -28,19 +28,12 @@
                 </ul>
             </div>
             <div class="col-md-6">
-                <h3><span class="glyphicon glyphicon-link"></span> Old-style experiments</h3>
+                <h3><span class="glyphicon glyphicon-link"></span> Experiments</h3>
                 <ul>
-                    {% for experiment_name in old_experiment_names %}
+                    {% for experiment_name in experiment_names %}
                         <li>
                             <a href="/experiments/{{ experiment_name }}" > /experiments/{{ experiment_name }}</a>
-                        </li>
-                    {%  endfor %}
-                </ul>
-                <h3><span class="glyphicon glyphicon-link"></span> New experiments</h3>
-                <ul>
-                    {% for experiment_name in new_experiment_names %}
-                        <li>
-                            <a href="/compare/{{ experiment_name }}" >{{ experiment_name }}</a>
+                            (<a href="/tree/{{ experiment_name }}" >tree</a>)
                         </li>
                     {%  endfor %}
                 </ul>
