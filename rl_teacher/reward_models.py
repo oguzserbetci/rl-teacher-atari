@@ -10,7 +10,7 @@ from keras import backend as K
 from scipy import stats
 
 from rl_teacher.summaries import AgentLogger
-from rl_teacher.clip_manager import ClipManager
+from rl_teacher.clip_manager import SynthClipManager, ClipManager
 from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet
 from rl_teacher.comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
 from rl_teacher.segment_sampling import segments_from_rand_rollout, sample_segment_from_path, basic_segment_from_null_action
@@ -65,11 +65,17 @@ class OriginalEnvironmentReward(RewardModel):
     def predict_reward(self, path):
         return path["original_rewards"]
 
-class ChironRewardModel(RewardModel):
+class OrdinalRewardModel(RewardModel):
     """A learned model of an environmental reward using training data that is merely sorted."""
 
-    def __init__(self, env, experiment_name, label_schedule, clip_length, stacked_frames, workers):
-        self.clip_manager = ClipManager(env, experiment_name, workers)
+    def __init__(self, model_type, env, experiment_name, label_schedule, clip_length, stacked_frames, workers):
+        model_type = "human"  # HACK TODO INTEGRATE
+        if model_type == "synth":
+            self.clip_manager = SynthClipManager(env, experiment_name)
+        elif model_type == "human":
+            self.clip_manager = ClipManager(env, experiment_name, workers)
+        else:
+            raise ValueError("Cannot find clip manager that matches keyword \"%s\"" % model_type)
         self.is_fresh = self.clip_manager.total_number_of_clips == 0
 
         self.label_schedule = label_schedule

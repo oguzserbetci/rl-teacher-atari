@@ -1,6 +1,7 @@
 import os
 import multiprocessing
 import pickle
+import bisect
 from time import sleep
 
 import numpy as np
@@ -28,6 +29,53 @@ def _tree_successor(node):
         node = node.parent
     # If we've backtracked to the root return None, else node.parent will be successor
     return node.parent
+
+
+class SynthClipManager(object):
+    """Like the basic ClipManager, but uses the original environment reward to sort the clips, and doesn't save/load from disk/database"""
+
+    def __init__(self, env, experiment_name):
+        self.env = env
+        self.experiment_name = experiment_name
+        self._sorted_clips = []  # List of lists of clips (each sublist's clips have equal reward sums)
+        self._ordinal_rewards = []  # List of the reward sums for each sublist
+
+    def clear_old_data(self):
+        print("The synthetic labeler doesn't use old data.")
+
+    def add(self, new_clip, *, source="", sync=False):
+        # Clips are sorted as they're added
+        new_reward = sum(new_clip["original_rewards"])
+        if new_reward in self._ordinal_rewards:
+            index = self._ordinal_rewards.index(new_reward)
+            self._sorted_clips[index].append(new_clip)
+        else:
+            index = bisect.bisect(self._ordinal_rewards, new_reward)
+            self._ordinal_rewards.insert(index, new_reward)
+            self._sorted_clips.insert(index, [new_clip])
+
+    @property
+    def total_number_of_clips(self):
+        return self.number_of_sorted_clips
+
+    @property
+    def number_of_sorted_clips(self):
+        return sum([len(self._sorted_clips[i]) for i in range(len(self._sorted_clips))])
+
+    @property
+    def maximum_ordinal(self):
+        return len(self._sorted_clips) - 1
+
+    def sort_clips(self, wait_until_database_fully_sorted=False):
+        """Does nothing. Clips are sorted as they're added."""
+
+    def get_sorted_clips(self, *, batch_size=None):
+        clips_with_ordinals = []
+        for ordinal in range(len(self._sorted_clips)):
+            clips_with_ordinals += [{'clip': clip, 'ord': ordinal} for clip in self._sorted_clips[ordinal]]
+        sample = np.random.choice(clips_with_ordinals, batch_size, replace=False) if batch_size else clips_with_ordinals
+        return [None for _ in sample], [item['clip'] for item in sample], [item['ord'] for item in sample]
+
 
 class ClipManager(object):
     """Saves/loads clips from disk, gets new ones from teacher, and syncs everything up with the database"""

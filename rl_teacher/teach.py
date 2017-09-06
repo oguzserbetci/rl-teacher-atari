@@ -10,7 +10,7 @@ from pposgd_mpi.run_atari import train_atari
 from ga3c.Server import Server as Ga3cServer
 from ga3c.Config import Config as Ga3cConfig
 
-from rl_teacher.reward_models import OriginalEnvironmentReward, ChironRewardModel, ComparisonRewardModel
+from rl_teacher.reward_models import OriginalEnvironmentReward, OrdinalRewardModel, ComparisonRewardModel
 from rl_teacher.envs import get_timesteps_per_episode
 from rl_teacher.envs import make_env
 from rl_teacher.label_schedules import LabelAnnealer, ConstantLabelSchedule
@@ -70,8 +70,10 @@ def main():
     if args.reward_model == "rl":
         reward_model = OriginalEnvironmentReward()
         args.pretrain_iters = 0  # Don't bother pre-training a traditional RL agent
-    elif args.reward_model == "chiron":
-        reward_model = ChironRewardModel(env, experiment_name, schedule, args.clip_length, args.stacked_frames, args.workers)
+    elif args.reward_model == "chiron":  # TODO REMOVE "chiron" and make this the default model
+        reward_model = OrdinalRewardModel(
+            args.reward_model, env, experiment_name, schedule,
+            args.clip_length, args.stacked_frames, args.workers)
     else:
         reward_model = ComparisonRewardModel(
             env,
