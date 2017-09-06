@@ -14,6 +14,6 @@ def initialize():
 initialize()
 
 try:
-    from human_feedback_api.models import Comparison
+    from human_feedback_api.models import Comparison, Clip, SortTree
 except AppRegistryNotReady:
-    logging.info("Could not yet import Feedback")
+    logging.info("Could not yet import models")

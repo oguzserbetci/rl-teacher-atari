@@ -10,13 +10,11 @@ from pposgd_mpi.run_atari import train_atari
 from ga3c.Server import Server as Ga3cServer
 from ga3c.Config import Config as Ga3cConfig
 
-from rl_teacher.reward_predictors import TraditionalRLRewardPredictor, ComparisonRewardPredictor
-from rl_teacher.comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
+from rl_teacher.reward_models import OriginalEnvironmentReward, OrdinalRewardModel
 from rl_teacher.envs import get_timesteps_per_episode
 from rl_teacher.envs import make_env
 from rl_teacher.label_schedules import LabelAnnealer, ConstantLabelSchedule
 from rl_teacher.video import SegmentVideoRecorder
-from rl_teacher.segment_sampling import segments_from_rand_rollout
 from rl_teacher.summaries import AgentLogger, make_summary_writer
 from rl_teacher.utils import slugify
 
@@ -28,55 +26,14 @@ def make_label_schedule(n_pretrain_labels, n_labels, num_timesteps, agent_logger
             final_labels=n_labels,
             pretrain_labels=n_pretrain_labels)
     else:
-        print("No label limit given. We will request one label every few seconds.")
-        return ConstantLabelSchedule(pretrain_labels=n_pretrain_labels)
-
-def make_comparison_predictor(env, experiment_name, predictor_type, summary_writer,
-                              clip_length, stacked_frames, agent_logger, label_schedule):
-    if predictor_type == "synth":
-        comparison_collector = SyntheticComparisonCollector()
-    elif predictor_type == "human":
-        comparison_collector = HumanComparisonCollector(env, experiment_name=experiment_name)
-    else:
-        raise ValueError("Bad value for --predictor: %s" % predictor_type)
-
-    return ComparisonRewardPredictor(
-        env,
-        experiment_name,
-        summary_writer,
-        comparison_collector=comparison_collector,
-        agent_logger=agent_logger,
-        label_schedule=label_schedule,
-        clip_length=clip_length,
-        stacked_frames=stacked_frames
-    )
-
-def generate_random_pretraining_data(predictor, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
-    print("Starting random rollouts to generate pretraining segments. No learning will take place...")
-    pretrain_segments = segments_from_rand_rollout(
-        env_id, make_env, n_desired_segments=n_pretrain_labels * 2,
-        clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
-
-    # Add segments to comparison collector
-    for seg in pretrain_segments:
-        predictor.comparison_collector.add_segment(seg)
-    # Turn our random segments into comparisons
-    for _ in range(n_pretrain_labels):
-        predictor.comparison_collector.invent_comparison()
-    # Label our comparisons
-    predictor.comparison_collector.label_unlabeled_comparisons(goal=n_pretrain_labels, verbose=True)
-
-def pretrain_predictor(predictor, n_pretrain_iters):
-    print("Starting pretraining...")
-    for i in range(1, n_pretrain_iters + 1):
-        predictor.train_predictor()  # Train on pretraining labels
-        if i % 25 == 0:
-            print("%s/%s predictor pretraining iters... " % (i, n_pretrain_iters))
+        seconds_between_labels = 60
+        print("No label limit given. We will request one label every %s seconds." % seconds_between_labels)
+        return ConstantLabelSchedule(pretrain_labels=n_pretrain_labels, seconds_between_labels=seconds_between_labels)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-e', '--env_id', required=True)
-    parser.add_argument('-p', '--predictor', required=True)
+    parser.add_argument('-p', '--reward_model', required=True)
     parser.add_argument('-n', '--name', required=True)
     parser.add_argument('-s', '--seed', default=1, type=int)
     parser.add_argument('-w', '--workers', default=4, type=int)
@@ -89,8 +46,9 @@ def main():
     parser.add_argument('-c', '--clip_length', default=1.5, type=float)
     parser.add_argument('-f', '--stacked_frames', default=4, type=int)
     parser.add_argument('-V', '--no_videos', action="store_true")
-    parser.add_argument('-R', '--restore', action="store_true")
-    parser.add_argument('-r', '--soft_restore', action="store_true")
+    parser.add_argument('-X', '--wipe_data', action="store_true")
+    parser.add_argument('-x', '--wipe_models', action="store_true")
+    parser.add_argument('--wipe_agent_model', action="store_true")
     args = parser.parse_args()
 
     print("Setting things up...")
@@ -100,55 +58,57 @@ def main():
     summary_writer = make_summary_writer(run_name)
     env = make_env(env_id)
     num_timesteps = int(args.num_timesteps)
+    agent_logger = AgentLogger(summary_writer)
+    n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else (args.n_labels // 4 if args.n_labels else 0)
+    schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, agent_logger)
 
     os.makedirs('checkpoints/reward_model', exist_ok=True)
     os.makedirs('segments', exist_ok=True)
+    os.makedirs('clips', exist_ok=True)
 
-    # Make predictor
-    if args.predictor == "rl":
-        predictor = TraditionalRLRewardPredictor(summary_writer)
+    # Make reward model
+    if args.reward_model == "rl":
+        reward_model = OriginalEnvironmentReward()
+        args.pretrain_iters = 0  # Don't bother pre-training a traditional RL agent
     else:
-        agent_logger = AgentLogger(summary_writer)
-        n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else args.n_labels // 4
-        schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, agent_logger)
-        predictor = make_comparison_predictor(
-            env, experiment_name, args.predictor, summary_writer,
-            args.clip_length, args.stacked_frames, agent_logger, schedule)
+        reward_model = OrdinalRewardModel(
+            args.reward_model, env, experiment_name, schedule,
+            args.clip_length, args.stacked_frames, args.workers)
 
-        if args.restore:
-            predictor.load_model_from_checkpoint()
-            print("Model loaded from checkpoint!")
-        elif args.soft_restore:
-            # Assume that the relevant segments are already loaded
-            pretrain_predictor(predictor, args.pretrain_iters)
-        else:
-            predictor.comparison_collector.clear_old_data()
-            generate_random_pretraining_data(
-                predictor, env_id, n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
-            pretrain_predictor(predictor, args.pretrain_iters)
+    # Load data and pre-train
+    new_data = args.wipe_data or reward_model.is_fresh
+    if new_data:
+        reward_model.reset_training_data(
+            env_id, make_env, n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
+    elif not args.wipe_models:
+        reward_model.load_model_from_checkpoint()
+        print("Reward model loaded from checkpoint!")
 
-    # Wrap the predictor to capture videos every so often:
+    reward_model.train(args.pretrain_iters, report_frequency=25)
+    reward_model.save_model_checkpoint()
+
+    # Wrap the reward model to capture videos every so often:
     if not args.no_videos:
         video_path = os.path.join('/tmp/rl_teacher_vids', run_name)
-        predictor = SegmentVideoRecorder(predictor, env, save_dir=video_path, checkpoint_interval=100)
+        reward_model = SegmentVideoRecorder(reward_model, env, save_dir=video_path, checkpoint_interval=20)
 
-    print("Starting joint training of predictor and agent")
+    print("Starting joint training of reward model and agent")
     if args.agent == "ga3c":
         Ga3cConfig.ATARI_GAME = env_id
         Ga3cConfig.MAKE_ENV_FUNCTION = make_env
         Ga3cConfig.NETWORK_NAME = experiment_name
         Ga3cConfig.SAVE_FREQUENCY = 200
         Ga3cConfig.AGENTS = args.workers
-        Ga3cConfig.LOAD_CHECKPOINT = args.restore
+        Ga3cConfig.LOAD_CHECKPOINT = not new_data and not args.wipe_models and not args.wipe_agent_model
         Ga3cConfig.STACKED_FRAMES = args.stacked_frames
         Ga3cConfig.BETA_START = args.starting_beta
         Ga3cConfig.BETA_END = args.starting_beta * 0.1
-        Ga3cServer(predictor).main()
+        Ga3cServer(reward_model).main()
     elif args.agent == "parallel_trpo":
         train_parallel_trpo(
             env_id=env_id,
             make_env=make_env,
-            predictor=predictor,
+            predictor=reward_model,
             summary_writer=summary_writer,
             workers=args.workers,
             runtime=(num_timesteps / 1000),
@@ -158,10 +118,10 @@ def main():
             seed=args.seed,
         )
     elif args.agent == "pposgd_mpi":
-        train_pposgd_mpi(lambda: make_env(env_id), num_timesteps=num_timesteps, seed=args.seed, predictor=predictor)
+        train_pposgd_mpi(lambda: make_env(env_id), num_timesteps=num_timesteps, seed=args.seed, predictor=reward_model)
     elif args.agent == "ppo_atari":
         # TODO: Add Multi-CPU support!
-        train_atari(env, num_timesteps=num_timesteps, seed=args.seed, num_cpu=1, predictor=predictor)
+        train_atari(env, num_timesteps=num_timesteps, seed=args.seed, num_cpu=1, predictor=reward_model)
     else:
         raise ValueError("%s is not a valid choice for args.agent" % args.agent)
 

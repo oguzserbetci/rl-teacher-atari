@@ -1,6 +1,7 @@
 # Teacher
 *.sqlite3
 segments/
+clips/
 
 # GA3C
 checkpoints/
@@ -102,3 +103,6 @@ ENV/
 
 # Rope project settings
 .ropeproject
+
+# Remote sync
+.remote-sync.json

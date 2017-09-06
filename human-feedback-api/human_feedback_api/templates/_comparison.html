@@ -57,16 +57,16 @@
 {#                      action="/experiments/{{ experiment.name }}/ajax_response" method="post">#}
 {#                    {% csrf_token %}#}
 {#                    <input type="hidden" name="comparison_id" value="{{ comparison.id }}">#}
-{#                    <input type="hidden" name="response" value="{{ 'tie' }}">#}
-{#                    <input class="btn btn-lg btn-default  choice-tie" type="submit" value="It's a tie">#}
+{#                    <input type="hidden" name="response" value="{{ 'abstain' }}">#}
+{#                    <input class="btn btn-lg btn-default choice-abstain" type="submit" value="Can't tell">#}
 {#                </form>#}
 
                 <form style="padding-top:30px"
                       action="/experiments/{{ experiment.name }}/ajax_response" method="post">
                     {% csrf_token %}
                     <input type="hidden" name="comparison_id" value="{{ comparison.id }}">
-                    <input type="hidden" name="response" value="{{ 'abstain' }}">
-                    <input class="btn btn-lg btn-default choice-abstain" type="submit" value="Can't tell">
+                    <input type="hidden" name="response" value="{{ 'tie' }}">
+                    <input class="btn btn-lg btn-default choice-tie" type="submit" value="It's a tie">
                 </form>
             </div>
         </div>

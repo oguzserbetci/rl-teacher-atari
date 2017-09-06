@@ -13,18 +13,24 @@ class Comparison(models.Model):
     created_at = models.DateTimeField('date created', auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
 
+    # TODO: Instead of having media urls, these should be pointers to Clip models
     media_url_1 = models.TextField('media url #1', db_index=True)
     media_url_2 = models.TextField('media url #2', db_index=True)
 
     shown_to_tasker_at = models.DateTimeField('time shown to tasker', db_index=True, blank=True, null=True)
     responded_at = models.DateTimeField('time response received', db_index=True, blank=True, null=True)
     response_kind = models.TextField('the response from the tasker', db_index=True,
-        validators=[validate_inclusion_of_response_kind])
+                                     validators=[validate_inclusion_of_response_kind])
     response = models.TextField('the response from the tasker', db_index=True, blank=True, null=True)
     experiment_name = models.TextField('name of experiment')
 
     priority = models.FloatField('site will display higher priority items first', db_index=True)
     note = models.TextField('note to be displayed along with the query', default="", blank=True)
+
+    # The Binary Search/Sort Tree that this comparison belongs to. Only used for new-style experiments.
+    tree_node = models.ForeignKey('SortTree', null=True, blank=True, default=None)
+    # Whether this comparison is related to a pending clip for said node. Helper used for new-style experiments.
+    relevant_to_pending_clip = models.BooleanField(default=False)
 
     # Validation
     def full_clean(self, exclude=None, validate_unique=True):
@@ -36,11 +42,66 @@ class Comparison(models.Model):
         try:
             return RESPONSE_KIND_TO_RESPONSES_OPTIONS[self.response_kind]
         except KeyError:
-            raise KeyError("{} is not a valid response_kind. Valid response_kinds are {}".format(self.response_kind,
-                RESPONSE_KIND_TO_RESPONSES_OPTIONS.keys()))
+            raise KeyError("{} is not a valid response_kind. Valid response_kinds are {}".format(
+                self.response_kind, RESPONSE_KIND_TO_RESPONSES_OPTIONS.keys()))
 
     def validate_inclusion_of_response(self):
         # This can't be a normal validator because it depends on a value
         if self.response is not None and self.response not in self.response_options:
-            raise ValidationError(_('%(value)s is not included in %(options)s'),
+            raise ValidationError(
+                _('%(value)s is not included in %(options)s'),
                 params={'value': self.response, 'options': self.response_options}, )
+
+class Clip(models.Model):
+    created_at = models.DateTimeField('date created', auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+
+    media_url = models.TextField('media url', db_index=True)
+    environment_id = models.TextField('environment id', db_index=True)
+    clip_tracking_id = models.IntegerField('clip tracking id', db_index=True)
+
+    source = models.TextField('note of where the clip came from', default="", blank=True)
+
+class SortTree(models.Model):
+    """ Extends a red-black tree to handle async clip sorting with equivalence. """
+
+    parent = models.ForeignKey('self', null=True, related_name='+')
+    left = models.ForeignKey('self', null=True, related_name='+')
+    right = models.ForeignKey('self', null=True, related_name='+')
+
+    pending_clips = models.ManyToManyField(Clip, related_name='pending_sort_locations')
+    bound_clips = models.ManyToManyField(Clip, related_name='tree_bindings')
+
+    experiment_name = models.TextField('name of experiment')
+
+    is_red = models.BooleanField()  # Used for red-black autobalancing
+
+    # I could theoretically do these with a setter decorator,
+    # but I want to be able to manipulate them directly without autosaving if needed.
+    def make_red(self):
+        self.is_red = True
+        self.save()
+
+    def make_black(self):
+        self.is_red = False
+        self.save()
+
+    def set_left(self, x):
+        self.left = x
+        if x:
+            x.parent = self
+            # Move the pending clips for the child upstream to be re-sorted
+            self.pending_clips.add(*x.pending_clips.all())
+            x.pending_clips.clear()
+            x.save()
+        self.save()
+
+    def set_right(self, x):
+        self.right = x
+        if x:
+            x.parent = self
+            # Move the pending clips for the child upstream to be re-sorted
+            self.pending_clips.add(*x.pending_clips.all())
+            x.pending_clips.clear()
+            x.save()
+        self.save()

@@ -34,7 +34,6 @@ from ga3c.Config import Config
 from ga3c.Environment import Environment
 from ga3c.Experience import Experience
 
-
 class ProcessAgent(Process):
     def __init__(self, id, prediction_q, training_q, episode_log_q, reward_modifier_q=None):
         super(ProcessAgent, self).__init__()
@@ -97,7 +96,6 @@ class ProcessAgent(Process):
         }
 
         time_count = 0
-        reward_sum = 0.0
 
         while not done:
             # very first few frames
@@ -108,7 +106,6 @@ class ProcessAgent(Process):
             prediction, value = self.predict(self.env.current_state)
             action = self.select_action(prediction)
             reward, done, info = self.env.step(action)
-            reward_sum += reward
             exp = Experience(self.env.previous_state, action, prediction, reward, done, info["human_obs"])
             experiences.append(exp)
 
@@ -143,6 +140,7 @@ class ProcessAgent(Process):
                 #   END REWARD MODIFICATIONS   #
                 ################################
 
+                reward_sum = sum([x.reward for x in experiences])
                 updated_exps = ProcessAgent._accumulate_rewards(experiences, self.discount_factor, terminal_reward)
                 x_, r_, a_ = self.convert_data(updated_exps)
                 yield x_, r_, a_, reward_sum
