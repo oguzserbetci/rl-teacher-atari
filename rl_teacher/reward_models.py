@@ -147,7 +147,7 @@ class ChironRewardModel(RewardModel):
         self._episode_count += 1
 
         # We may be in a new part of the environment, so we take a clip to learn from if requested
-        if self.clip_manager.total_number_of_clips < self.label_schedule.n_desired_labels:  # TODO: Change "labels" to clips!
+        if self.clip_manager.total_number_of_clips < self.label_schedule.n_desired_labels:
             new_clip = sample_segment_from_path(path, int(self._frames_per_segment))
             if new_clip:
                 self.clip_manager.add(new_clip, source="on-policy callback")
