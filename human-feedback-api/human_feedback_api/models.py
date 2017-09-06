@@ -13,6 +13,7 @@ class Comparison(models.Model):
     created_at = models.DateTimeField('date created', auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
 
+    # TODO: Instead of having media urls, these should be pointers to Clip models
     media_url_1 = models.TextField('media url #1', db_index=True)
     media_url_2 = models.TextField('media url #2', db_index=True)
 

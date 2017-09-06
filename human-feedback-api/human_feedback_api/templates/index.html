@@ -30,10 +30,15 @@
             <div class="col-md-6">
                 <h3><span class="glyphicon glyphicon-link"></span> Experiments</h3>
                 <ul>
-                    {% for experiment_name in experiment_names %}
+                    {% for experiment_name in binary_tree_experiments %}
                         <li>
                             <a href="/experiments/{{ experiment_name }}" > /experiments/{{ experiment_name }}</a>
                             (<a href="/tree/{{ experiment_name }}" >tree</a>)
+                        </li>
+                    {%  endfor %}
+                    {% for experiment_name in other_experiments %}
+                        <li>
+                            <a href="/experiments/{{ experiment_name }}" > /experiments/{{ experiment_name }}</a>
                         </li>
                     {%  endfor %}
                 </ul>

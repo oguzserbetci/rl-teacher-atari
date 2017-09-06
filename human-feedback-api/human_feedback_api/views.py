@@ -54,13 +54,11 @@ def _all_comparisons(experiment_name, use_locking=False):
     return Comparison.objects.filter(ready, experiment_name=experiment_name).order_by('-priority', '-created_at')
 
 def index(request):
+    binary_tree_experiments = set([name for name in SortTree.objects.filter(parent=None).order_by().values_list('experiment_name', flat=True)])
+    all_comparison_experiments = [name for name in Comparison.objects.order_by().values_list('experiment_name', flat=True)]
+    other_experiments = set(all_comparison_experiments) - binary_tree_experiments
     return render(request, 'index.html', context={
-        'experiment_names': set(
-            [name for name in
-                Comparison.objects.order_by().values_list('experiment_name', flat=True)] +
-            [name for name in
-                SortTree.objects.filter(parent=None).order_by().values_list('experiment_name', flat=True)]
-        )})
+        'binary_tree_experiments': binary_tree_experiments, 'other_experiments': other_experiments})
 
 def list_comparisons(request, experiment_name):
     comparisons = Comparison.objects.filter(experiment_name=experiment_name).order_by('responded_at', '-priority')
@@ -130,43 +128,50 @@ def respond(request, experiment_name):
 def all_clips(request, environment_id):
     return render(request, 'all_clips.html', context={"clips": Clip.objects.filter(environment_id=environment_id)})
 
+# Sorting tree logic:
+def _handle_comparison_on_node(comp, node, experiment_name):
+    # First mark the comparison as no longer relevant
+    comp.relevant_to_pending_clip = False
+    comp.save()
+    # Get the clip being compared
+    clip = Clip.objects.get(media_url=comp.media_url_1)
+    # Mark the clip as no longer pending for this node
+    node.pending_clips.remove(clip)
+    # Move the clip to the right place
+    if comp.response in ["left", "right"]:
+        try:
+            redblack.move_clip_down(node, clip, comp.response)
+        except redblack.NewNodeNeeded as need_new_node:
+            # The tree may have shifted. First verify that the clip has been compared to all parents.
+            check_node = node.parent
+            while check_node:
+                if not Comparison.objects.filter(tree_node=check_node, media_url_1=clip.media_url):
+                    need_new_node = False
+                    check_node.pending_clips.add(clip)
+                    break
+                check_node = check_node.parent
+            if need_new_node:
+                new_node = SortTree(
+                    experiment_name=node.experiment_name,
+                    is_red=True,
+                    parent=node,
+                )
+                new_node.save()
+                new_node.bound_clips.add(clip)
+                if need_new_node.on_the_left:
+                    node.left = new_node
+                else:
+                    node.right = new_node
+                node.save()
+                redblack.rebalance_tree(new_node)
+    else:  # Assume tie
+        node.bound_clips.add(clip)
+
 def _handle_node_with_pending_clips(node, experiment_name):
     comparisons_to_handle = Comparison.objects.filter(tree_node=node, relevant_to_pending_clip=True).exclude(response=None)
     if comparisons_to_handle:
-        comp = comparisons_to_handle[0]
-        comp.relevant_to_pending_clip = False
-        comp.save()
-        clip = Clip.objects.get(media_url=comp.media_url_1)
-        node.pending_clips.remove(clip)
-        if comp.response in ["left", "right"]:
-            try:
-                redblack.move_clip_down(node, clip, comp.response)
-            except redblack.NewNodeNeeded as need_new_node:
-                # The tree may have shifted. First verify that the clip has been compared to all parents.
-                check_node = node.parent
-                while check_node:
-                    if not Comparison.objects.filter(tree_node=check_node, media_url_1=clip.media_url):
-                        need_new_node = False
-                        check_node.pending_clips.add(clip)
-                        break
-                    check_node = check_node.parent
-                if need_new_node:
-                    new_node = SortTree(
-                        experiment_name=node.experiment_name,
-                        is_red=True,
-                        parent=node,
-                    )
-                    new_node.save()
-                    new_node.bound_clips.add(clip)
-                    if need_new_node.on_the_left:
-                        node.left = new_node
-                    else:
-                        node.right = new_node
-                    node.save()
-                    redblack.rebalance_tree(new_node)
-                    return True
-        else:  # Assume tie
-            node.bound_clips.add(clip)
+        _handle_comparison_on_node(comparisons_to_handle[0], node, experiment_name)
+        return True
     elif not Comparison.objects.filter(tree_node=node, relevant_to_pending_clip=True):
         # Make a comparison, since there are no relevant ones for this node.
         clip1 = node.pending_clips.all()[0]
@@ -178,13 +183,13 @@ def _handle_node_with_pending_clips(node, experiment_name):
             media_url_2=clip2.media_url,
             response_kind='left_or_right',
             priority=0.1 if node.parent is None else 1.0,  # De-prioritize comparisons on the root
-            # TODO Figure out whether change in priority will actually change the order of comparisons
-            # It may be the case that what determines which comparisons exist is the order in which tree nodes are visited
             tree_node=node,
             relevant_to_pending_clip=True,
         )
         comparison.full_clean()
         comparison.save()
+    # else:
+    #   We're waiting for the user to label the comparison for this node
     return False
 
 def _sorting_logic(experiment_name):
@@ -200,12 +205,12 @@ def _sorting_logic(experiment_name):
                 run_logic = True
                 break
 
+# Tree visualization code:
 def _get_visnodes(node, depth, tree_position, what_kind_of_child_i_am):
     max_depth = depth
     results = [{
         'id': 'visnode%s' % node.id,
         'bound_clips': [clip.media_url for clip in node.bound_clips.all()],
-        'show_clip': 0,
         'tree_position': tree_position,  # If the root pos=1, this ranges (0, 2)
         'depth': depth,
         'color': '#A00' if node.is_red else 'black',
