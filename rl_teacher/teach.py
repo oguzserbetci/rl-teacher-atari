@@ -99,7 +99,7 @@ def main():
     # Wrap the reward model to capture videos every so often:
     if not args.no_videos:
         video_path = os.path.join('/tmp/rl_teacher_vids', run_name)
-        reward_model = SegmentVideoRecorder(reward_model, env, save_dir=video_path, checkpoint_interval=100)
+        reward_model = SegmentVideoRecorder(reward_model, env, save_dir=video_path, checkpoint_interval=20)
 
     print("Starting joint training of reward model and agent")
     if args.agent == "ga3c":
@@ -107,12 +107,11 @@ def main():
         Ga3cConfig.MAKE_ENV_FUNCTION = make_env
         Ga3cConfig.NETWORK_NAME = experiment_name
         Ga3cConfig.SAVE_FREQUENCY = 200
-        Ga3cConfig.RANDOM_ACT_THRESHOLD = get_timesteps_per_episode(env) * 0.8
         Ga3cConfig.AGENTS = args.workers
         Ga3cConfig.LOAD_CHECKPOINT = not new_data and not args.wipe_models and not args.wipe_agent_model
         Ga3cConfig.STACKED_FRAMES = args.stacked_frames
-        #Ga3cConfig.BETA_START = args.starting_beta
-        #Ga3cConfig.BETA_END = args.starting_beta * 0.1
+        Ga3cConfig.BETA_START = args.starting_beta
+        Ga3cConfig.BETA_END = args.starting_beta * 0.1
         Ga3cServer(reward_model).main()
     elif args.agent == "parallel_trpo":
         train_parallel_trpo(

@@ -76,17 +76,11 @@ class ProcessAgent(Process):
         p, v = self.wait_q.get()
         return p, v
 
-    def select_action(self, prediction, path_length):
+    def select_action(self, prediction):
         if Config.PLAY_MODE:
             action = np.argmax(prediction)
         else:
-            if Config.RANDOM_ACT_THRESHOLD and path_length > Config.RANDOM_ACT_THRESHOLD:
-                # After a certain point we throw out what we know and behave randomly.
-                # The idea is that a well-trained agent will get to a good part of the environment
-                # Then when acting randomly there's a chance for further learning to escape local maxima
-                action = np.random.choice(self.actions)
-            else:
-                action = np.random.choice(self.actions, p=prediction)
+            action = np.random.choice(self.actions, p=prediction)
         return action
 
     def run_episode(self):
@@ -110,7 +104,7 @@ class ProcessAgent(Process):
                 continue
 
             prediction, value = self.predict(self.env.current_state)
-            action = self.select_action(prediction, len(path["obs"]) + len(experiences))
+            action = self.select_action(prediction)
             reward, done, info = self.env.step(action)
             exp = Experience(self.env.previous_state, action, prediction, reward, done, info["human_obs"])
             experiences.append(exp)
