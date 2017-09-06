@@ -158,6 +158,7 @@ def _handle_comparison_on_node(comp, node, experiment_name):
                 )
                 new_node.save()
                 new_node.bound_clips.add(clip)
+                print("New Node", new_node.id, "is being seeded with", clip, clip.clip_tracking_id)
                 if need_new_node.on_the_left:
                     node.left = new_node
                 else:
@@ -166,6 +167,7 @@ def _handle_comparison_on_node(comp, node, experiment_name):
                 redblack.rebalance_tree(new_node)
     else:  # Assume tie
         node.bound_clips.add(clip)
+        print(clip, clip.clip_tracking_id, 'being assigned to', node, node.id)
 
 def _handle_node_with_pending_clips(node, experiment_name):
     comparisons_to_handle = Comparison.objects.filter(tree_node=node, relevant_to_pending_clip=True).exclude(response=None)

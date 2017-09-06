@@ -250,7 +250,7 @@ class NetworkVP:
 
     def _get_episode_from_filename(self, filename):
         # TODO: hacky way of getting the episode. ideally episode should be stored as a TF variable
-        return int(re.split('/|_|\.', filename)[2])
+        return int(re.split('/|_|\.', filename)[-1])
 
     def save(self, episode):
         self.saver.save(self.sess, self._checkpoint_filename(episode))

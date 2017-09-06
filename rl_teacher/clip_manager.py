@@ -41,7 +41,7 @@ class SynthClipManager(object):
         self._ordinal_rewards = []  # List of the reward sums for each sublist
 
     def clear_old_data(self):
-        print("The synthetic labeler doesn't use old data.")
+        """Synthetic labeler doesn't use old data"""
 
     def add(self, new_clip, *, source="", sync=False):
         # Clips are sorted as they're added
