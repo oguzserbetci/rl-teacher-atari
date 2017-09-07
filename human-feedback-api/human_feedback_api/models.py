@@ -9,13 +9,25 @@ def validate_inclusion_of_response_kind(value):
     if value not in kinds:
         raise ValidationError(_('%(value)s is not included in %(kinds)s'), params={'value': value, 'kinds': kinds}, )
 
+class Clip(models.Model):
+    created_at = models.DateTimeField('date created', auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+
+    media_url = models.TextField('media url', db_index=True)
+    environment_id = models.TextField('environment id', db_index=True)
+    clip_tracking_id = models.IntegerField('clip tracking id', db_index=True)
+
+    source = models.TextField('note of where the clip came from', default="", blank=True)
+
+    def __str__(self):
+        return "Clip {}".format(self.clip_tracking_id)
+
 class Comparison(models.Model):
     created_at = models.DateTimeField('date created', auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
 
-    # TODO: Instead of having media urls, these should be pointers to Clip models
-    media_url_1 = models.TextField('media url #1', db_index=True)
-    media_url_2 = models.TextField('media url #2', db_index=True)
+    left_clip = models.ForeignKey(Clip, db_index=True, related_name="compared_on_the_left")
+    right_clip = models.ForeignKey(Clip, db_index=True, related_name="compared_on_the_right")
 
     shown_to_tasker_at = models.DateTimeField('time shown to tasker', db_index=True, blank=True, null=True)
     responded_at = models.DateTimeField('time response received', db_index=True, blank=True, null=True)
@@ -31,6 +43,9 @@ class Comparison(models.Model):
     tree_node = models.ForeignKey('SortTree', null=True, blank=True, default=None)
     # Whether this comparison is related to a pending clip for said node. Helper used for new-style experiments.
     relevant_to_pending_clip = models.BooleanField(default=False)
+
+    def __str__(self):
+        return "Comparison {} ({} vs {})".format(self.id, self.left_clip, self.right_clip)
 
     # Validation
     def full_clean(self, exclude=None, validate_unique=True):
@@ -52,16 +67,6 @@ class Comparison(models.Model):
                 _('%(value)s is not included in %(options)s'),
                 params={'value': self.response, 'options': self.response_options}, )
 
-class Clip(models.Model):
-    created_at = models.DateTimeField('date created', auto_now_add=True, db_index=True)
-    updated_at = models.DateTimeField(auto_now=True, db_index=True)
-
-    media_url = models.TextField('media url', db_index=True)
-    environment_id = models.TextField('environment id', db_index=True)
-    clip_tracking_id = models.IntegerField('clip tracking id', db_index=True)
-
-    source = models.TextField('note of where the clip came from', default="", blank=True)
-
 class SortTree(models.Model):
     """ Extends a red-black tree to handle async clip sorting with equivalence. """
 
@@ -75,6 +80,9 @@ class SortTree(models.Model):
     experiment_name = models.TextField('name of experiment')
 
     is_red = models.BooleanField()  # Used for red-black autobalancing
+
+    def __str__(self):
+        return "Node {}".format(self.id)
 
     # I could theoretically do these with a setter decorator,
     # but I want to be able to manipulate them directly without autosaving if needed.
