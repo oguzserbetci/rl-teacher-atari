@@ -12,7 +12,6 @@ from scipy import stats
 from rl_teacher.summaries import AgentLogger
 from rl_teacher.clip_manager import SynthClipManager, ClipManager
 from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet
-from rl_teacher.comparison_collectors import SyntheticComparisonCollector, HumanComparisonCollector
 from rl_teacher.segment_sampling import segments_from_rand_rollout, sample_segment_from_path, basic_segment_from_null_action
 from rl_teacher.utils import corrcoef
 
@@ -47,9 +46,6 @@ class RewardModel(object):
     def path_callback(self, path):
         pass  # Defaults to no behavior
 
-    def reset_training_data(self, env_id, n_pretrain_labels, clip_length, stacked_frames, workers):
-        pass  # No training data by default
-
     def train(self, iterations=1, report_frequency=None):
         pass  # Doesn't require training by default
 
@@ -68,14 +64,20 @@ class OriginalEnvironmentReward(RewardModel):
 class OrdinalRewardModel(RewardModel):
     """A learned model of an environmental reward using training data that is merely sorted."""
 
-    def __init__(self, model_type, env, experiment_name, label_schedule, clip_length, stacked_frames, workers):
+    def __init__(self, model_type, env, env_id, make_env, experiment_name, label_schedule, n_pretrain_clips, clip_length, stacked_frames, workers):
         if model_type == "synth":
             self.clip_manager = SynthClipManager(env, experiment_name)
         elif model_type == "human":
             self.clip_manager = ClipManager(env, experiment_name, workers)
         else:
             raise ValueError("Cannot find clip manager that matches keyword \"%s\"" % model_type)
-        self.is_fresh = self.clip_manager.total_number_of_clips == 0
+
+        if self.clip_manager.total_number_of_clips == 0:
+            # If there are no clips to learn from, generate them!
+            self.generate_pretraining_data(env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers)
+        elif not self.clip_manager._sorted_clips:
+            # If there are clips but no sort tree, create a sort tree!
+            self.clip_manager.create_new_sort_tree_from_existing_clips()
 
         self.label_schedule = label_schedule
         self.experiment_name = experiment_name
@@ -165,9 +167,7 @@ class OrdinalRewardModel(RewardModel):
         if self._episode_count % self._episodes_per_checkpoint == 0:
             self.save_model_checkpoint()
 
-    def reset_training_data(self, env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers):
-        self.clip_manager.clear_old_data()
-
+    def generate_pretraining_data(self, env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers):
         print("Starting random rollouts to generate pretraining segments. No learning will take place...")
         # We need a valid clip for the root node of our search tree.
         # Null actions are more likely to generate a valid clip than a random clip from random actions.
@@ -182,8 +182,6 @@ class OrdinalRewardModel(RewardModel):
         # Now add the rest
         for clip in random_clips:
             self.clip_manager.add(clip, source="random rollout")
-
-        self.clip_manager.sort_clips(wait_until_database_fully_sorted=True)
 
     def calculate_targets(self, ordinals):
         """ Project ordinal information into a cardinal value to use as a reward target """
@@ -223,23 +221,27 @@ class OrdinalRewardModel(RewardModel):
         print("Saving reward model checkpoint!")
         self.saver.save(self.sess, self._checkpoint_filename())
 
-    def load_model_from_checkpoint(self):
+    def try_to_load_model_from_checkpoint(self):
         filename = tf.train.latest_checkpoint(os.path.dirname(self._checkpoint_filename()))
-        self.saver.restore(self.sess, filename)
-        # Dump model outputs with errors
-        if True:  # <-- Toggle testing with this
-            with self.graph.as_default():
-                clip_ids, clips, ordinals = self.clip_manager.get_sorted_clips()
-                targets = self.calculate_targets(ordinals)
-                for i in range(len(clips)):
-                    predicted_rewards = self.sess.run(self.rewards, feed_dict={
-                        self.obs_placeholder: np.asarray([clips[i]["obs"]]),
-                        self.act_placeholder: np.asarray([clips[i]["actions"]]),
-                        K.learning_phase(): False
-                    })[0]
-                    reward_sum = sum(predicted_rewards)
-                    starting_reward = predicted_rewards[0]
-                    ending_reward = predicted_rewards[-1]
-                    print(
-                        "Clip {: 3d}: predicted = {: 5.2f} | target = {: 5.2f} | error = {: 5.2f} | start = {: 5.2f} | end = {: 5.2f}"
-                        .format(clip_ids[i], reward_sum, targets[i], reward_sum - targets[i], starting_reward, ending_reward))
+        if filename is None:
+            print('No reward model checkpoint found on disk for experiment "{}"'.format(self.experiment_name))
+        else:
+            self.saver.restore(self.sess, filename)
+            print("Reward model loaded from checkpoint!")
+            # Dump model outputs with errors
+            if True:  # <-- Toggle testing with this
+                with self.graph.as_default():
+                    clip_ids, clips, ordinals = self.clip_manager.get_sorted_clips()
+                    targets = self.calculate_targets(ordinals)
+                    for i in range(len(clips)):
+                        predicted_rewards = self.sess.run(self.rewards, feed_dict={
+                            self.obs_placeholder: np.asarray([clips[i]["obs"]]),
+                            self.act_placeholder: np.asarray([clips[i]["actions"]]),
+                            K.learning_phase(): False
+                        })[0]
+                        reward_sum = sum(predicted_rewards)
+                        starting_reward = predicted_rewards[0]
+                        ending_reward = predicted_rewards[-1]
+                        print(
+                            "Clip {: 3d}: predicted = {: 5.2f} | target = {: 5.2f} | error = {: 5.2f} | start = {: 5.2f} | end = {: 5.2f}"
+                            .format(clip_ids[i], reward_sum, targets[i], reward_sum - targets[i], starting_reward, ending_reward))

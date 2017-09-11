@@ -12,22 +12,22 @@
         <div class="row">
             <div class="col-md-6 text-center">
                 <h3>Left</h3>
-                {% if ".mp4" in feedback.media_url_1 %}
+                {% if ".mp4" in feedback.left_clip.media_url %}
                     <video width="400px" autoplay loop>
-                        <source src="{{ feedback.media_url_1  }}" type="video/mp4"/>
+                        <source src="{{ feedback.left_clip.media_url  }}" type="video/mp4"/>
                     </video>
                 {% else %}
-                    <img style="width:400px" src="{{ feedback.media_url_1 }}">
+                    <img style="width:400px" src="{{ feedback.left_clip.media_url }}">
                 {% endif %}
             </div>
             <div class="col-md-6 text-center">
                 <h3>Right</h3>
-                {% if ".mp4" in feedback.media_url_2 %}
+                {% if ".mp4" in feedback.right_clip.media_url %}
                     <video width="400px" autoplay loop>
-                        <source src="{{ feedback.media_url_2  }}" type="video/mp4"/>
+                        <source src="{{ feedback.right_clip.media_url  }}" type="video/mp4"/>
                     </video>
                 {% else %}
-                    <img style="width:400px" src="{{ feedback.media_url_2 }}">
+                    <img style="width:400px" src="{{ feedback.right_clip.media_url }}">
                 {% endif %}
             </div>
         </div> <!-- row -->

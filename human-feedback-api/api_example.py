@@ -1,5 +1,8 @@
 from human_feedback_api import Comparison
 
+# TODO: This was broken by making Comparisons refer to Clip models instead of text urls
+# DELETE?
+
 def generate_test():
     # TEST_MEDIA = ['test707470989.png', 'test559628392.png', 'test736369680.png', 'test836374824.png',
     #     'test593516009.png', 'test836986396.png', 'test996736825.png', 'test746178624.png', 'test58579485.png', ]

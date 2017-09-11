@@ -255,12 +255,17 @@ class NetworkVP:
     def save(self, episode):
         self.saver.save(self.sess, self._checkpoint_filename(episode))
 
-    def load(self):
+    def try_to_load(self):
         filename = tf.train.latest_checkpoint(os.path.dirname(self._checkpoint_filename(episode=0)))
-        if Config.LOAD_EPISODE > 0:
-            filename = self._checkpoint_filename(Config.LOAD_EPISODE)
-        self.saver.restore(self.sess, filename)
-        return self._get_episode_from_filename(filename)
+        if filename is None:
+            print('No checkpoint for GA3C model named "{}" found on disk'.format(self.model_name))
+            return 0
+        else:
+            if Config.LOAD_EPISODE > 0:
+                filename = self._checkpoint_filename(Config.LOAD_EPISODE)
+            self.saver.restore(self.sess, filename)
+            print("GA3C model loaded from checkpoint")
+            return self._get_episode_from_filename(filename)
 
     def get_variables_names(self):
         return [var.name for var in self.graph.get_collection('trainable_variables')]

@@ -52,7 +52,7 @@ class Server:
 
         self.model = NetworkVP(Config.DEVICE, Config.NETWORK_NAME, Environment().get_num_actions())
         if Config.LOAD_CHECKPOINT:
-            self.stats.episode_count.value = self.model.load()
+            self.stats.episode_count.value = self.model.try_to_load()
 
         self.training_step = 0
         self.frame_counter = 0

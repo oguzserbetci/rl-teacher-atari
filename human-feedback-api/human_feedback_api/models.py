@@ -98,9 +98,6 @@ class SortTree(models.Model):
         self.left = x
         if x:
             x.parent = self
-            # Move the pending clips for the child upstream to be re-sorted
-            self.pending_clips.add(*x.pending_clips.all())
-            x.pending_clips.clear()
             x.save()
         self.save()
 
@@ -108,8 +105,5 @@ class SortTree(models.Model):
         self.right = x
         if x:
             x.parent = self
-            # Move the pending clips for the child upstream to be re-sorted
-            self.pending_clips.add(*x.pending_clips.all())
-            x.pending_clips.clear()
             x.save()
         self.save()

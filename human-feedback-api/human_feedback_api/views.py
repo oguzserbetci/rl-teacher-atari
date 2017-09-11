@@ -105,7 +105,7 @@ def ajax_response(request, experiment_name):
 
 def show_comparison(request, comparison_id):
     comparison = get_object_or_404(Comparison, pk=comparison_id)
-    return render(request, 'show_comparison.html', context={"comparison": comparison})
+    return render(request, 'show_feedback.html', context={"feedback": comparison})
 
 def respond(request, experiment_name):
     # This only does things if the experiment uses a sorting tree.
@@ -130,24 +130,30 @@ def all_clips(request, environment_id):
 
 # Sorting tree logic:
 def _handle_comparison_on_node(comp, node, experiment_name):
+    print("Handling", comp, "for", node)
     # First mark the comparison as no longer relevant
     comp.relevant_to_pending_clip = False
     comp.save()
     # Get the clip being compared
-    clip = Clip.objects.get(media_url=comp.media_url_1)
+    clip = comp.left_clip
+    print("Working with", clip)
     # Mark the clip as no longer pending for this node
     node.pending_clips.remove(clip)
     # Move the clip to the right place
     if comp.response in ["left", "right"]:
         try:
+            print("Trying to move", clip, "down the tree!")
             redblack.move_clip_down(node, clip, comp.response)
         except redblack.NewNodeNeeded as need_new_node:
+            print("We need a new node for", clip)
             # The tree may have shifted. First verify that the clip has been compared to all parents.
             check_node = node.parent
             while check_node:
-                if not Comparison.objects.filter(tree_node=check_node, media_url_1=clip.media_url):
+                if not Comparison.objects.filter(tree_node=check_node, left_clip=clip):
                     need_new_node = False
                     check_node.pending_clips.add(clip)
+                    print("Oh! Just kidding! The upstream parent,", check_node, "doesn't have a comparison for", clip)
+                    print("Reassinging the clip to the upstream parent.")
                     break
                 check_node = check_node.parent
             if need_new_node:
@@ -158,7 +164,8 @@ def _handle_comparison_on_node(comp, node, experiment_name):
                 )
                 new_node.save()
                 new_node.bound_clips.add(clip)
-                print("New Node", new_node.id, "is being seeded with", clip, clip.clip_tracking_id)
+                print("Created", new_node)
+                print("New Node", new_node, "is being seeded with", clip)
                 if need_new_node.on_the_left:
                     node.left = new_node
                 else:
@@ -167,27 +174,30 @@ def _handle_comparison_on_node(comp, node, experiment_name):
                 redblack.rebalance_tree(new_node)
     else:  # Assume tie
         node.bound_clips.add(clip)
-        print(clip, clip.clip_tracking_id, 'being assigned to', node, node.id)
+        print(clip, 'being assigned to', node)
 
 def _handle_node_with_pending_clips(node, experiment_name):
     comparisons_to_handle = Comparison.objects.filter(tree_node=node, relevant_to_pending_clip=True).exclude(response=None)
     if comparisons_to_handle:
+        print(node, "has comparisons to handle!")
         _handle_comparison_on_node(comparisons_to_handle[0], node, experiment_name)
         return True
     elif not Comparison.objects.filter(tree_node=node, relevant_to_pending_clip=True):
+        print(node, "needs a new comparison!")
         # Make a comparison, since there are no relevant ones for this node.
         clip1 = node.pending_clips.all()[0]
         clip2 = random.choice(node.bound_clips.all())
-        print("Let's make a comparison between", clip1, clip1.clip_tracking_id, "and", clip2, clip2.clip_tracking_id)
+        print("Let's make a comparison between", clip1, "and", clip2)
         comparison = Comparison(
             experiment_name=experiment_name,
-            media_url_1=clip1.media_url,
-            media_url_2=clip2.media_url,
+            left_clip=clip1,
+            right_clip=clip2,
             response_kind='left_or_right',
             priority=0.1 if node.parent is None else 1.0,  # De-prioritize comparisons on the root
             tree_node=node,
             relevant_to_pending_clip=True,
         )
+        print(comparison, "created!")
         comparison.full_clean()
         comparison.save()
     # else:
@@ -195,14 +205,18 @@ def _handle_node_with_pending_clips(node, experiment_name):
     return False
 
 def _sorting_logic(experiment_name):
+    print("Sorting logic start for ", experiment_name)
     run_logic = True
     while run_logic:
+        print("Logic loop")
         run_logic = False
         # Look to generate comparisons from the tree
         active_tree_nodes = SortTree.objects.filter(experiment_name=experiment_name).exclude(pending_clips=None)
         for node in active_tree_nodes:
+            print("Logic for", node)
             tree_changed = _handle_node_with_pending_clips(node, experiment_name)
             if tree_changed:
+                print("Tree changed!")
                 # If the tree changed we want to immediately stop the logic and restart to avoid conncurrent writes
                 run_logic = True
                 break
@@ -212,6 +226,7 @@ def _get_visnodes(node, depth, tree_position, what_kind_of_child_i_am):
     max_depth = depth
     results = [{
         'id': 'visnode%s' % node.id,
+        'name': node.id,
         'bound_clips': [clip.media_url for clip in node.bound_clips.all()],
         'tree_position': tree_position,  # If the root pos=1, this ranges (0, 2)
         'depth': depth,

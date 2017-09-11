@@ -30,11 +30,12 @@
     padding: 5px;
     border-radius: 15px;
     color: {{ node.text_color }};">
+    Node {{ node.name }}
     <video width="84px" loop>
       <source type="video/mp4"/>
     </video>
-    Bound: {{ node.num_bound_clips }}
-    Pending: {{ node.num_pending_clips }}
+    Bound: {{ node.num_bound_clips }}<br/>
+    Pending: {{ node.num_pending_clips }}<br/>
     <script>
       (function() {
         var nodeId = '{{ node.id }}';

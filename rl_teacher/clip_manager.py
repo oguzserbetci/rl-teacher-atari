@@ -40,9 +40,6 @@ class SynthClipManager(object):
         self._sorted_clips = []  # List of lists of clips (each sublist's clips have equal reward sums)
         self._ordinal_rewards = []  # List of the reward sums for each sublist
 
-    def clear_old_data(self):
-        """Synthetic labeler doesn't use old data"""
-
     def add(self, new_clip, *, source="", sync=False):
         # Clips are sorted as they're added
         new_reward = sum(new_clip["original_rewards"])
@@ -101,15 +98,15 @@ class ClipManager(object):
                 pass
             except Exception:
                 print("Exception occurred when loading clip %s" % clip_id)
-                if input("Do you want to erase this clip? (y/n)\n").startswith('y'):
+                if input("Do you want to erase this clip? (y/n)\n> ").lower().startswith('y'):
                     print("Erasing clip from disk...")
                     os.remove(self._pickle_path(clip_id))
                     print("Erasing clip and all related data from database...")
                     clip.delete()
                     print("Warning: There's a chance that this simply invalidates the sort-tree. Check the human feedback api /tree/experiment_name for any experiments involving this clip.")
                     from human_feedback_api import Comparison
-                    Comparison.objects.filter(media_url_1=clip.media_url).delete()
-                    Comparison.objects.filter(media_url_2=clip.media_url).delete()
+                    Comparison.objects.filter(left_clip=clip).delete()
+                    Comparison.objects.filter(right_clip=clip).delete()
                     print("Invalid data deleted.\nMoving on...")
                 else:
                     raise
@@ -122,27 +119,20 @@ class ClipManager(object):
         if len(self._clips) < 1:
             print("Starting fresh!")
         else:
-            print("Found %s old clips for this environment!" % (len(self._clips)))
+            print("Found %s old clips for this environment! (%s sorted)" % (len(self._clips), len(self._sorted_clips)))
 
-    def clear_old_data(self):
-        if len(self._clips) > 0:
-            print("Erasing old clips FOR THE ENTIRE ENVIRONMENT of %s..." % self.env.spec.id)
-
-        for clip_id in self._clips:
-            os.remove(self._pickle_path(clip_id))
-
-        self._sorted_clips = []
-        self._clips = {}
-        self._max_clip_id = 0
-
+    def create_new_sort_tree_from_existing_clips(self):
         from human_feedback_api import Clip
-        Clip.objects.filter(environment_id=self.env.spec.id).delete()
-        from human_feedback_api import SortTree
-        SortTree.objects.filter(experiment_name=self.experiment_name).delete()
-        from human_feedback_api import Comparison
-        Comparison.objects.filter(experiment_name=self.experiment_name).delete()
+        # Assume that the best seed clip is the one with the lowest tracking id
+        seed_id = min(self._clips.keys())
+        seed_clip = Clip.objects.get(environment_id=self.env.spec.id, clip_tracking_id=seed_id)
+        self._create_sort_tree(seed_clip)
+        for clip_id in self._clips:
+            if clip_id != seed_id:
+                clip = Clip.objects.get(environment_id=self.env.spec.id, clip_tracking_id=clip_id)
+                self._assign_clip_to_sort_tree(clip)
 
-    def _create_search_tree(self, seed_clip):
+    def _create_sort_tree(self, seed_clip):
         from human_feedback_api import SortTree
         tree = SortTree(
             experiment_name=self.experiment_name,
@@ -151,13 +141,13 @@ class ClipManager(object):
         tree.save()
         tree.bound_clips.add(seed_clip)
 
-    def _assign_clip_to_search_tree(self, clip):
+    def _assign_clip_to_sort_tree(self, clip):
         from human_feedback_api import SortTree
         try:
             root = SortTree.objects.get(experiment_name=self.experiment_name, parent=None)
             root.pending_clips.add(clip)
         except SortTree.DoesNotExist:
-            self._create_search_tree(clip)
+            self._create_sort_tree(clip)
 
     def _add_to_database(self, clip_id, source=""):
         from human_feedback_api import Clip
@@ -168,7 +158,7 @@ class ClipManager(object):
             source=source,
         )
         clip.save()
-        self._assign_clip_to_search_tree(clip)
+        self._assign_clip_to_sort_tree(clip)
 
     def add(self, new_clip, *, source="", sync=False):
         clip_id = self._max_clip_id + 1

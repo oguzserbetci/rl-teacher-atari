@@ -88,16 +88,18 @@ def move_clip_down(base_node, clip, comparison_response):
     # Since clip1 is the left clip, we want to move it left in the tree if the user says "right".
     move_left = (comparison_response == "right")
     if move_left and base_node.left:
-        comparisons = Comparison.objects.filter(tree_node=base_node.left, media_url_1=clip.media_url).exclude(response=None)
+        comparisons = Comparison.objects.filter(tree_node=base_node.left, left_clip=clip).exclude(response=None)
         if comparisons:
             move_clip_down(base_node.left, clip, comparisons[0].response)
         else:
+            print(base_node.left, "gains", clip, "as new pending clip!")
             base_node.left.pending_clips.add(clip)
     elif (not move_left) and base_node.right:
-        comparisons = Comparison.objects.filter(tree_node=base_node.right, media_url_1=clip.media_url).exclude(response=None)
+        comparisons = Comparison.objects.filter(tree_node=base_node.right, left_clip=clip).exclude(response=None)
         if comparisons:
             move_clip_down(base_node.right, clip, comparisons[0].response)
         else:
+            print(base_node.right, "gains", clip, "as new pending clip!")
             base_node.right.pending_clips.add(clip)
     else:
         raise NewNodeNeeded(move_left)
