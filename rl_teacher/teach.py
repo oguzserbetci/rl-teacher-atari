@@ -4,11 +4,6 @@ from time import time
 
 import numpy as np
 import tensorflow as tf
-from parallel_trpo.train import train_parallel_trpo
-from pposgd_mpi.run_mujoco import train_pposgd_mpi
-from pposgd_mpi.run_atari import train_atari
-from ga3c.Server import Server as Ga3cServer
-from ga3c.Config import Config as Ga3cConfig
 
 from rl_teacher.reward_models import OriginalEnvironmentReward, OrdinalRewardModel
 from rl_teacher.envs import get_timesteps_per_episode
@@ -114,7 +109,6 @@ def main():
     if not args.force_new_reward_model:
         reward_model.try_to_load_model_from_checkpoint()
 
-    reward_model.clip_manager.sort_clips(wait_until_database_fully_sorted=True)
     reward_model.train(args.pretrain_iters, report_frequency=25)
     reward_model.save_model_checkpoint()
 
@@ -125,6 +119,8 @@ def main():
 
     print("Starting joint training of reward model and agent")
     if args.agent == "ga3c":
+        from ga3c.Server import Server as Ga3cServer
+        from ga3c.Config import Config as Ga3cConfig
         Ga3cConfig.ATARI_GAME = env_id
         Ga3cConfig.MAKE_ENV_FUNCTION = make_env
         Ga3cConfig.NETWORK_NAME = experiment_name
@@ -136,6 +132,7 @@ def main():
         Ga3cConfig.BETA_END = args.starting_beta * 0.1
         Ga3cServer(reward_model).main()
     elif args.agent == "parallel_trpo":
+        from parallel_trpo.train import train_parallel_trpo
         train_parallel_trpo(
             env_id=env_id,
             make_env=make_env,
@@ -149,8 +146,10 @@ def main():
             seed=args.seed,
         )
     elif args.agent == "pposgd_mpi":
+        from pposgd_mpi.run_mujoco import train_pposgd_mpi
         train_pposgd_mpi(lambda: make_env(env_id), num_timesteps=args.num_timesteps, seed=args.seed, predictor=reward_model)
     elif args.agent == "ppo_atari":
+        from pposgd_mpi.run_atari import train_atari
         # TODO: Add Multi-CPU support!
         train_atari(env, num_timesteps=args.num_timesteps, seed=args.seed, num_cpu=1, predictor=reward_model)
     else:

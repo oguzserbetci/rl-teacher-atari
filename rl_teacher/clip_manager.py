@@ -71,7 +71,7 @@ class SynthClipManager(object):
         for ordinal in range(len(self._sorted_clips)):
             clips_with_ordinals += [{'clip': clip, 'ord': ordinal} for clip in self._sorted_clips[ordinal]]
         sample = np.random.choice(clips_with_ordinals, batch_size, replace=False) if batch_size else clips_with_ordinals
-        return [None for _ in sample], [item['clip'] for item in sample], [item['ord'] for item in sample]
+        return [-1 for _ in sample], [item['clip'] for item in sample], [item['ord'] for item in sample]
 
 
 class ClipManager(object):

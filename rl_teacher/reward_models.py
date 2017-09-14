@@ -52,8 +52,8 @@ class RewardModel(object):
     def save_model_checkpoint(self):
         pass  # Nothing to save
 
-    def load_model_from_checkpoint(self):
-        raise NotImplementedError()
+    def try_to_load_model_from_checkpoint(self):
+        pass  # Nothing to load
 
 class OriginalEnvironmentReward(RewardModel):
     """Model that always gives the reward provided by the environment."""
@@ -78,6 +78,8 @@ class OrdinalRewardModel(RewardModel):
         elif not self.clip_manager._sorted_clips:
             # If there are clips but no sort tree, create a sort tree!
             self.clip_manager.create_new_sort_tree_from_existing_clips()
+
+        self.clip_manager.sort_clips(wait_until_database_fully_sorted=True)
 
         self.label_schedule = label_schedule
         self.experiment_name = experiment_name
@@ -119,13 +121,17 @@ class OrdinalRewardModel(RewardModel):
             self.act_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None), name="act_placeholder")
             # Discrete actions need to become one-hot vectors for the model
             segment_act = tf.one_hot(tf.cast(self.act_placeholder, tf.int32), self.act_shape[0])
+            # HACK Use a convolutional network for Atari
+            # TODO Should check the input space dimensions, not the output space!
+            net = SimpleConvolveObservationQNet(self.obs_shape, self.act_shape)
         else:
             self.act_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None) + self.act_shape, name="act_placeholder")
             # Assume the actions are how we want them
             segment_act = self.segment_act_placeholder
+            # In simple environments, default to a basic Multi-layer Perceptron (see TODO above)
+            net = FullyConnectedMLP(self.obs_shape, self.act_shape)
 
-        # A neural network maps a (state, action) pair to a reward
-        net = SimpleConvolveObservationQNet(self.obs_shape, self.act_shape)
+        # Our neural network maps a (state, action) pair to a reward
         self.rewards = nn_predict_rewards(self.obs_placeholder, segment_act, net, self.obs_shape, self.act_shape)
 
         # We use trajectory segments rather than individual (state, action) pairs because
@@ -178,7 +184,7 @@ class OrdinalRewardModel(RewardModel):
             clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
 
         # Add the null-action clip first, so the root is valid.
-        self.clip_manager.add(first_clip, source="null-action", sync=True)  # Make syncronus to ensure this is the first clip.
+        self.clip_manager.add(first_clip, source="null-action", sync=True)  # Make synchronous to ensure this is the first clip.
         # Now add the rest
         for clip in random_clips:
             self.clip_manager.add(clip, source="random rollout")
@@ -243,5 +249,5 @@ class OrdinalRewardModel(RewardModel):
                         starting_reward = predicted_rewards[0]
                         ending_reward = predicted_rewards[-1]
                         print(
-                            "Clip {: 3d}: predicted = {: 5.2f} | target = {: 5.2f} | error = {: 5.2f} | start = {: 5.2f} | end = {: 5.2f}"
-                            .format(clip_ids[i], reward_sum, targets[i], reward_sum - targets[i], starting_reward, ending_reward))
+                            "Clip {: 3d}: predicted = {: 5.2f} | target = {: 5.2f} | error = {: 5.2f}"  # | start = {: 5.2f} | end = {: 5.2f}"
+                            .format(clip_ids[i], reward_sum, targets[i], reward_sum - targets[i]))  # , starting_reward, ending_reward))
