@@ -178,7 +178,10 @@ class NetworkVP:
         summaries.append(tf.summary.histogram("activation_p", self.softmax_p))
 
         self.summary_op = tf.summary.merge(summaries)
-        self.log_writer = tf.summary.FileWriter("logs/%s" % self.model_name, self.sess.graph)
+        if Config.LOG_WRITER:
+            self.log_writer = Config.LOG_WRITER
+        else:
+            self.log_writer = tf.summary.FileWriter("logs/%s" % self.model_name, self.sess.graph)
 
     def dense_layer(self, input, out_dim, name, func=tf.nn.relu):
         in_dim = input.get_shape().as_list()[-1]

@@ -122,6 +122,8 @@ class Config:
     TENSORBOARD = False
     # Update TensorBoard every X training steps
     TENSORBOARD_UPDATE_FREQUENCY = 1000
+    # Overwite this with a custom FileWriter if you want to, say, set a custom logging location
+    LOG_WRITER = None
 
     # Enable to save models every SAVE_FREQUENCY episodes
     SAVE_MODELS = True
