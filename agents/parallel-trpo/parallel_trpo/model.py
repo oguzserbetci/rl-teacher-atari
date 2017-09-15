@@ -167,7 +167,7 @@ class TRPO(object):
         ep_rewards = np.array([path["original_rewards"].sum() for path in paths])
 
         stats = OrderedDict()
-        stats["Average sum of true rewards per episode"] = ep_rewards.mean()
+        stats["Avg sum of true rewards per episode"] = ep_rewards.mean()
         stats["Entropy"] = entropy_after
         stats["KL(old|new)"] = kl_after
         stats["Surrogate loss"] = surrogate_after

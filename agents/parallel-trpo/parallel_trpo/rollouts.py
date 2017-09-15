@@ -1,5 +1,5 @@
 import os
-import multiprocess
+import multiprocessing
 from time import time
 from time import sleep
 
@@ -7,9 +7,9 @@ import numpy as np
 import tensorflow as tf
 from parallel_trpo.utils import filter_ob, make_network, softmax
 
-class Actor(multiprocess.Process):
+class Actor(multiprocessing.Process):
     def __init__(self, task_q, result_q, env_id, make_env, seed, max_timesteps_per_episode):
-        multiprocess.Process.__init__(self)
+        multiprocessing.Process.__init__(self)
         self.env_id = env_id
         self.make_env = make_env
         self.seed = seed
@@ -122,16 +122,16 @@ class ParallelRollout(object):
     def __init__(self, env_id, make_env, reward_predictor, num_workers, max_timesteps_per_episode, seed):
         # Tensorflow is not fork-safe, so we must use spawn instead
         # https://github.com/tensorflow/tensorflow/issues/5448#issuecomment-258934405
-        # We use multiprocess rather than multiprocessing because Keras sets a multiprocessing context
+        # Keras sets a multiprocessinging context, so you may need to switch to using multiprocess instead
         if not os.environ.get("SET_PARALLEL_TRPO_START_METHOD"):  # Use an env variable to prevent double-setting
-            multiprocess.set_start_method('spawn')
+            multiprocessing.set_start_method('spawn')
             os.environ['SET_PARALLEL_TRPO_START_METHOD'] = "1"
 
         self.num_workers = num_workers
         self.predictor = reward_predictor
 
-        self.tasks_q = multiprocess.JoinableQueue()
-        self.results_q = multiprocess.Queue()
+        self.tasks_q = multiprocessing.JoinableQueue()
+        self.results_q = multiprocessing.Queue()
 
         self.actors = []
         for i in range(self.num_workers):
