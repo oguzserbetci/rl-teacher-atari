@@ -7,11 +7,25 @@ import numpy as np
 import tensorflow as tf
 from parallel_trpo.utils import filter_ob, make_network, softmax
 
+def get_frame_stack(frames, depth):
+    if depth < 1:
+        # Don't stack
+        return np.array(frames[-1])
+    lookback_length = min(depth, len(frames) - 1)
+    current_frame_copies = depth - lookback_length
+    frames_list = [frames[-1] for _ in range(current_frame_copies)] + [frames[-i] for i in range(lookback_length)]
+    # Reverse so the oldest frames come first instead of last
+    frames_list.reverse()
+    stacked_frames = np.array(frames_list)
+    # Move the stack to be the last dimension and return
+    return np.transpose(stacked_frames, list(range(1, len(stacked_frames.shape))) + [0])
+
 class Actor(multiprocessing.Process):
-    def __init__(self, task_q, result_q, env_id, make_env, seed, max_timesteps_per_episode):
+    def __init__(self, task_q, result_q, env_id, make_env, stacked_frames, seed, max_timesteps_per_episode):
         multiprocessing.Process.__init__(self)
         self.env_id = env_id
         self.make_env = make_env
+        self.stacked_frames = stacked_frames
         self.seed = seed
         self.task_q = task_q
         self.result_q = result_q
@@ -52,6 +66,8 @@ class Actor(multiprocessing.Process):
 
         # tensorflow variables (same as in model.py)
         observation_size = list(self.env.observation_space.shape)
+        if self.stacked_frames > 0:
+            observation_size += [self.stacked_frames]
         hidden_size = 64
         self.action_size = np.prod(self.env.action_space.shape) if self.continuous_actions else self.env.action_space.n
 
@@ -88,9 +104,12 @@ class Actor(multiprocessing.Process):
                 self.task_q.task_done()
 
     def rollout(self):
-        obs, actions, rewards, avg_action_dists, logstd_action_dists, human_obs = [], [], [], [], [], []
-        ob = filter_ob(self.env.reset())
+        unstacked_obs, obs, actions, rewards = [], [], [], []
+        avg_action_dists, logstd_action_dists, human_obs = [], [], []
+
+        unstacked_obs.append(filter_ob(self.env.reset()))
         for i in range(self.max_timesteps_per_episode):
+            ob = get_frame_stack(unstacked_obs, self.stacked_frames)
             action, avg_action_dist, logstd_action_dist = self.act(ob)
 
             obs.append(ob)
@@ -99,11 +118,11 @@ class Actor(multiprocessing.Process):
             logstd_action_dists.append(logstd_action_dist)
 
             if self.continuous_actions:
-                ob, rew, done, info = self.env.step(action)
+                raw_ob, rew, done, info = self.env.step(action)
             else:
                 choice = np.random.choice(self.action_size, p=action)
-                ob, rew, done, info = self.env.step(choice)
-            ob = filter_ob(ob)
+                raw_ob, rew, done, info = self.env.step(choice)
+            unstacked_obs.append(filter_ob(raw_ob))
 
             rewards.append(rew)
             human_obs.append(info.get("human_obs"))
@@ -119,14 +138,7 @@ class Actor(multiprocessing.Process):
                 return path
 
 class ParallelRollout(object):
-    def __init__(self, env_id, make_env, reward_predictor, num_workers, max_timesteps_per_episode, seed):
-        # Tensorflow is not fork-safe, so we must use spawn instead
-        # https://github.com/tensorflow/tensorflow/issues/5448#issuecomment-258934405
-        # Keras sets a multiprocessinging context, so you may need to switch to using multiprocess instead
-        if not os.environ.get("SET_PARALLEL_TRPO_START_METHOD"):  # Use an env variable to prevent double-setting
-            multiprocessing.set_start_method('spawn')
-            os.environ['SET_PARALLEL_TRPO_START_METHOD'] = "1"
-
+    def __init__(self, env_id, make_env, stacked_frames, reward_predictor, num_workers, max_timesteps_per_episode, seed):
         self.num_workers = num_workers
         self.predictor = reward_predictor
 
@@ -136,7 +148,8 @@ class ParallelRollout(object):
         self.actors = []
         for i in range(self.num_workers):
             new_seed = seed * 1000 + i  # Give each actor a uniquely seeded env
-            self.actors.append(Actor(self.tasks_q, self.results_q, env_id, make_env, new_seed, max_timesteps_per_episode))
+            self.actors.append(Actor(
+                self.tasks_q, self.results_q, env_id, make_env, stacked_frames, new_seed, max_timesteps_per_episode))
 
         for a in self.actors:
             a.start()

@@ -3,13 +3,14 @@ from math import ceil
 import numpy as np
 import tensorflow as tf
 
-from keras.layers import Dense, Dropout, LeakyReLU
-from keras.models import Sequential
-
 class FullyConnectedMLP(object):
     """Vanilla two hidden layer multi-layer perceptron"""
 
     def __init__(self, obs_shape, act_shape, h_size=64):
+        # Import Keras here to avoid messing with multiprocessing context too early
+        from keras.layers import Dense, Dropout, LeakyReLU
+        from keras.models import Sequential
+
         input_dim = np.prod(obs_shape) + np.prod(act_shape)
 
         self.model = Sequential()

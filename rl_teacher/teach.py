@@ -1,5 +1,6 @@
 import os
 import argparse
+import multiprocessing
 from time import time
 
 import numpy as np
@@ -14,6 +15,10 @@ from rl_teacher.episode_logger import EpisodeLogger
 from rl_teacher.utils import slugify
 
 def main():
+    # Tensorflow is not fork-safe, so we must use spawn instead
+    # https://github.com/tensorflow/tensorflow/issues/5448#issuecomment-258934405
+    multiprocessing.set_start_method('spawn')
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-e', '--env_id', required=True)
     parser.add_argument('-p', '--reward_model', required=True)
@@ -24,7 +29,7 @@ def main():
     parser.add_argument('-L', '--pretrain_labels', default=None, type=int)
     parser.add_argument('-t', '--num_timesteps', default=5e6, type=int)
     parser.add_argument('-a', '--agent', default="ga3c", type=str)
-    parser.add_argument('-i', '--pretrain_iters', default=10000, type=int)
+    parser.add_argument('-i', '--pretrain_iters', default=5000, type=int)
     parser.add_argument('-b', '--starting_beta', default=0.1, type=float)
     parser.add_argument('-c', '--clip_length', default=1.5, type=float)
     parser.add_argument('-f', '--stacked_frames', default=4, type=int)
@@ -126,6 +131,7 @@ def main():
         train_parallel_trpo(
             env_id=env_id,
             make_env=make_env,
+            stacked_frames=args.stacked_frames,
             predictor=reward_model,
             summary_writer=episode_logger,
             workers=args.workers,

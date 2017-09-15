@@ -13,7 +13,8 @@ As-is, `rl-teacher` only handles MuJoCo environments. This repository is meant t
 - Made `human-feedback-api` much more efficient by having humans sort clips into a red-black tree instead of doing blind comparisons
 - Added a visualization of the sorting tree for an experiment
 - Simplified reward models by having the model minimize squared error between predicted reward and a real-number reward based on the ordering of clips in the tree
-- Other miscellaneous improvements like the ability to define custom start-points in an Atari environment
+- Added support for frame-stacking
+- Other miscellaneous improvements like removing the multiprocess dependency from `parallel-trpo` and adding the ability to define custom start-points in an Atari environment
 
 # Installation
 
@@ -52,7 +53,7 @@ There are a few new command-line arguments that are worth knowing about. Primari
 - `--force_new_agent_model`
 Activating these flags will erase the corresponding data from the disk/database. For the most part this won't be necessary, and you can simply pick a new experiment name. Note, however, that *experiments within the same environment now share clips* so you may want to `--force_new_environment_clips` when starting a new experiment in an old environment.
 
-Also worth noting, there's a parameter called `--stacked_frames` (`-f`) that defaults to *4*. This helps model movement that the human naturally sees in the video, but can alter how the system performs compared to `rl-teacher`.
+Also worth noting, there's a parameter called `--stacked_frames` (`-f`) that defaults to *4*. This helps model movement that the human naturally sees in the video, but can alter how the system performs compared to `rl-teacher`. To remove frame stacking simply add `-f 0` to the command-line arguments.
 
 ## Backwards Compatibility
 

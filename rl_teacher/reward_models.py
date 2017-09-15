@@ -130,7 +130,7 @@ class OrdinalRewardModel(RewardModel):
         else:
             self.act_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None) + self.act_shape, name="act_placeholder")
             # Assume the actions are how we want them
-            segment_act = self.segment_act_placeholder
+            segment_act = self.act_placeholder
             # In simple environments, default to a basic Multi-layer Perceptron (see TODO above)
             net = FullyConnectedMLP(self.obs_shape, self.act_shape)
 

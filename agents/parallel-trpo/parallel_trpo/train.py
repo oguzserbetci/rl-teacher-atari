@@ -26,6 +26,7 @@ def train_parallel_trpo(
         env_id,
         predictor,
         make_env=gym.make,
+        stacked_frames=0,
         summary_writer=None,
         workers=1,
         runtime=1800,
@@ -42,12 +43,12 @@ def train_parallel_trpo(
         max_timesteps_per_episode = gym.spec(env_id).timestep_limit
 
     learner = TRPO(
-        env_id, make_env,
+        env_id, make_env, stacked_frames,
         max_kl=max_kl,
         discount_factor=discount_factor,
         cg_damping=cg_damping)
 
-    rollouts = ParallelRollout(env_id, make_env, predictor, workers, max_timesteps_per_episode, seed)
+    rollouts = ParallelRollout(env_id, make_env, stacked_frames, predictor, workers, max_timesteps_per_episode, seed)
 
     iteration = 0
     start_time = time()

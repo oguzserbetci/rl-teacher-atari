@@ -10,7 +10,7 @@ from parallel_trpo.value_function import LinearVF
 
 
 class TRPO(object):
-    def __init__(self, env_id, make_env, max_kl, discount_factor, cg_damping):
+    def __init__(self, env_id, make_env, stacked_frames, max_kl, discount_factor, cg_damping):
         self.max_kl = max_kl
         self.discount_factor = discount_factor
         self.cg_damping = cg_damping
@@ -19,6 +19,8 @@ class TRPO(object):
         continuous_actions = hasattr(env.action_space, "shape")
 
         observation_size = list(env.observation_space.shape)
+        if stacked_frames > 0:
+            observation_size += [stacked_frames]
         hidden_size = 64
         action_size = np.prod(env.action_space.shape) if continuous_actions else env.action_space.n
 
