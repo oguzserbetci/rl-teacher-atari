@@ -32,14 +32,17 @@ def offset_for_stacking(items, offset):
     return [items[0] for _ in range(offset)] + items[:-offset]
 
 def stack_frames(obs, depth):
-    """ Take a list of n obs arrays of shape (x,y) and stack them to return an array of shape (n,x,y,depth).
-    If depth=3, the first item will be just three copies of (x,y) stacked. The second item will have two copies of
-    the first item, and one of the second. The third item will be 1,2,3. The fourth will be 2,3,4 and so on."""
+    """ Take a list of n obs arrays of shape x and stack them to return an array
+    of shape (n,x[0],...,x[-1],depth). If depth=3, the first item will be just
+    three copies of the first frame stacked. The second item will have two copies
+    of the first frame, and one of the second. The third item will be 1,2,3.
+    The fourth will be 2,3,4 and so on."""
     if depth < 1:
         # Don't stack
         return np.array(obs)
     stacked_frames = np.array([offset_for_stacking(obs, offset) for offset in range(depth)])
-    return np.transpose(stacked_frames, [1, 2, 3, 0])  # Move the stack to be at the end.
+    # Move the stack to be at the end and return
+    return np.transpose(stacked_frames, list(range(1, len(stacked_frames.shape))) + [0])
 
 def random_action(env, ob):
     """ Pick an action by uniformly sampling the environment's action space. """
@@ -47,8 +50,10 @@ def random_action(env, ob):
 
 def null_action(env, ob):
     """ Do nothing. """
-    if env.action_space.n:  # Is descrete action space
+    if hasattr(env.action_space, 'n'):  # Is descrete
         return 0
+    if hasattr(env.action_space, 'low') and hasattr(env.action_space, 'high'):  # Is box
+        return (env.action_space.low + env.action_space.high) / 2.0  # Return the most average action
     raise NotImplementedError()  # TODO: Handle other action spaces
 
 def do_rollout(env, action_function, stacked_frames):
