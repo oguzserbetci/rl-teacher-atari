@@ -1,3 +1,8 @@
+"""
+This is an experimental file used to take multiple trained models and see how they perform in an environment.
+Unlike most of the codebase, this is provided as-is, without any guarantee of working.
+"""
+
 import numpy as np
 
 import gym

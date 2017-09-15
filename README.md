@@ -52,13 +52,17 @@ There are a few new command-line arguments that are worth knowing about. Primari
 - `--force_new_agent_model`
 Activating these flags will erase the corresponding data from the disk/database. For the most part this won't be necessary, and you can simply pick a new experiment name. Note, however, that *experiments within the same environment now share clips* so you may want to `--force_new_environment_clips` when starting a new experiment in an old environment.
 
+Also worth noting, there's a parameter called `--stacked_frames` (`-f`) that defaults to *4*. This helps model movement that the human naturally sees in the video, but can alter how the system performs compared to `rl-teacher`.
+
 ## Backwards Compatibility
 
 `rl-teacher-atari` is meant to be entirely backwards compatible, and do at least as well as `rl-teacher` on all tasks. If `rl-teacher-atari` lacks a feature that its parent has, please submit an issue.
 
 # TODO
 
-- [ ] Get PPO agent working for Atari
+- [ ] Fetch in clips added under previous experiments ("two") when an old experiment ("one") is re-launched!
+- [ ] Get PPO agent(s) working
 - [ ] Get all agents saving/loading cleanly
 - [ ] Make the reward model select the right neural net based on the shape of the environment's observation space, rather than action space
 - [ ] envs.py is still pretty gnarly; needs refactoring
+- [ ] Get play.py into a better state
