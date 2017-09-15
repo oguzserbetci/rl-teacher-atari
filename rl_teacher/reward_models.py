@@ -9,7 +9,6 @@ import tensorflow as tf
 from keras import backend as K
 from scipy import stats
 
-from rl_teacher.summaries import AgentLogger
 from rl_teacher.clip_manager import SynthClipManager, ClipManager
 from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet
 from rl_teacher.segment_sampling import segments_from_rand_rollout, sample_segment_from_path, basic_segment_from_null_action
@@ -38,13 +37,14 @@ def nn_predict_rewards(obs_segments, act_segments, network, obs_shape, act_shape
     return tf.reshape(rewards, (batchsize, segment_length))
 
 class RewardModel(object):
-    is_fresh = False  # Set this to true to generate pretraining data by default.
+    def __init__(self, episode_logger):
+        self._episode_logger = episode_logger
 
     def predict_reward(self, path):
         raise NotImplementedError()  # Must be overridden
 
     def path_callback(self, path):
-        pass  # Defaults to no behavior
+        self._episode_logger.log_episode(path)
 
     def train(self, iterations=1, report_frequency=None):
         pass  # Doesn't require training by default
@@ -64,7 +64,10 @@ class OriginalEnvironmentReward(RewardModel):
 class OrdinalRewardModel(RewardModel):
     """A learned model of an environmental reward using training data that is merely sorted."""
 
-    def __init__(self, model_type, env, env_id, make_env, experiment_name, label_schedule, n_pretrain_clips, clip_length, stacked_frames, workers):
+    def __init__(self, model_type, env, env_id, make_env, experiment_name, episode_logger, label_schedule, n_pretrain_clips, clip_length, stacked_frames, workers):
+        # TODO It's pretty assinine to pass in env, env_id, and make_env. Cleanup!
+        super().__init__(episode_logger)
+
         if model_type == "synth":
             self.clip_manager = SynthClipManager(env, experiment_name)
         elif model_type == "human":
@@ -157,6 +160,7 @@ class OrdinalRewardModel(RewardModel):
         return predicted_rewards[0]  # The zero here is to get the single returned path.
 
     def path_callback(self, path):
+        super().path_callback(path)
         self._episode_count += 1
 
         # We may be in a new part of the environment, so we take a clip to learn from if requested

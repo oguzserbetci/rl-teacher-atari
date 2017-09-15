@@ -8,22 +8,10 @@ import tensorflow as tf
 from rl_teacher.reward_models import OriginalEnvironmentReward, OrdinalRewardModel
 from rl_teacher.envs import get_timesteps_per_episode
 from rl_teacher.envs import make_env
-from rl_teacher.label_schedules import LabelAnnealer, ConstantLabelSchedule
+from rl_teacher.label_schedules import make_label_schedule
 from rl_teacher.video import SegmentVideoRecorder
-from rl_teacher.summaries import AgentLogger, make_summary_writer
+from rl_teacher.episode_logger import EpisodeLogger
 from rl_teacher.utils import slugify
-
-def make_label_schedule(n_pretrain_labels, n_labels, num_timesteps, agent_logger):
-    if n_labels:
-        return LabelAnnealer(
-            agent_logger,
-            final_timesteps=num_timesteps,
-            final_labels=n_labels,
-            pretrain_labels=n_pretrain_labels)
-    else:
-        seconds_between_labels = 60
-        print("No label limit given. We will request one label every %s seconds." % seconds_between_labels)
-        return ConstantLabelSchedule(pretrain_labels=n_pretrain_labels, seconds_between_labels=seconds_between_labels)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -50,6 +38,7 @@ def main():
     env_id = args.env_id
     experiment_name = slugify(args.name)
 
+    # Potentially erase old data
     if args.force_new_environment_clips:
         existing_clips = [x for x in os.listdir('clips') if x.startswith(env_id)]
         if len(existing_clips):
@@ -86,25 +75,23 @@ def main():
 
     print("Setting things up...")
     run_name = "%s/%s-%s" % (env_id, experiment_name, int(time()))
-    summary_writer = make_summary_writer(run_name)
     env = make_env(env_id)
-    agent_logger = AgentLogger(summary_writer)
     n_pretrain_labels = args.pretrain_labels if args.pretrain_labels else (args.n_labels // 4 if args.n_labels else 0)
-    schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, agent_logger)
+
+    episode_logger = EpisodeLogger(run_name)
+    schedule = make_label_schedule(n_pretrain_labels, args.n_labels, args.num_timesteps, episode_logger)
 
     os.makedirs('checkpoints/reward_model', exist_ok=True)
     os.makedirs('clips', exist_ok=True)
 
     # Make reward model
     if args.reward_model == "rl":
-        reward_model = OriginalEnvironmentReward()
+        reward_model = OriginalEnvironmentReward(episode_logger)
         args.pretrain_iters = 0  # Don't bother pre-training a traditional RL agent
     else:
         reward_model = OrdinalRewardModel(
-            args.reward_model, env, env_id, make_env, experiment_name, schedule,
+            args.reward_model, env, env_id, make_env, experiment_name, episode_logger, schedule,
             n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
-
-    # TODO Fetch in clips added under previous experiments ("two") when an old experiment ("one") is re-launched!
 
     if not args.force_new_reward_model:
         reward_model.try_to_load_model_from_checkpoint()
@@ -115,7 +102,8 @@ def main():
     # Wrap the reward model to capture videos every so often:
     if not args.no_videos:
         video_path = os.path.join('/tmp/rl_teacher_vids', run_name)
-        reward_model = SegmentVideoRecorder(reward_model, env, save_dir=video_path, checkpoint_interval=20)
+        checkpoint_interval = 20 if args.agent == "ga3c" else 200
+        reward_model = SegmentVideoRecorder(reward_model, env, save_dir=video_path, checkpoint_interval=checkpoint_interval)
 
     print("Starting joint training of reward model and agent")
     if args.agent == "ga3c":
@@ -125,6 +113,8 @@ def main():
         Ga3cConfig.MAKE_ENV_FUNCTION = make_env
         Ga3cConfig.NETWORK_NAME = experiment_name
         Ga3cConfig.SAVE_FREQUENCY = 200
+        Ga3cConfig.TENSORBOARD = True
+        Ga3cConfig.LOG_WRITER = episode_logger
         Ga3cConfig.AGENTS = args.workers
         Ga3cConfig.LOAD_CHECKPOINT = not args.force_new_agent_model
         Ga3cConfig.STACKED_FRAMES = args.stacked_frames
@@ -137,7 +127,7 @@ def main():
             env_id=env_id,
             make_env=make_env,
             predictor=reward_model,
-            summary_writer=summary_writer,
+            summary_writer=episode_logger,
             workers=args.workers,
             runtime=(args.num_timesteps / 1000),
             max_timesteps_per_episode=get_timesteps_per_episode(env),
