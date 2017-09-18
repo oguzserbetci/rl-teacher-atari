@@ -14,7 +14,7 @@ As-is, `rl-teacher` only handles MuJoCo environments. This repository is meant t
 - Added a visualization of the sorting tree
 - Simplified reward models by having the model minimize squared error between predicted reward and a real-number reward based on the ordering of clips in the tree
 - Added support for frame-stacking
-- Other miscellaneous improvements like removing the multiprocess dependency from `parallel-trpo` and adding the ability to define custom start-points in an Atari environment
+- Other miscellaneous improvements like speeding up pretraining, removing the multiprocess dependency from `parallel-trpo`, and adding the ability to define custom start-points in an Atari environment
 
 ![Red-Black Tree](https://i.imgur.com/AfFBxpy.png)
 
