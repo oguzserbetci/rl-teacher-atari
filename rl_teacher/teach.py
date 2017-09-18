@@ -7,12 +7,12 @@ import numpy as np
 import tensorflow as tf
 
 from rl_teacher.reward_models import OriginalEnvironmentReward, OrdinalRewardModel
-from rl_teacher.envs import get_timesteps_per_episode
 from rl_teacher.envs import make_env
 from rl_teacher.label_schedules import make_label_schedule
 from rl_teacher.video import SegmentVideoRecorder
 from rl_teacher.episode_logger import EpisodeLogger
 from rl_teacher.utils import slugify
+from rl_teacher.utils import get_timesteps_per_episode
 
 def main():
     # Tensorflow is not fork-safe, so we must use spawn instead

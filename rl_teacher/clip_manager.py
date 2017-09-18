@@ -8,10 +8,10 @@ import numpy as np
 
 from rl_teacher.video import write_segment_to_video, upload_to_gcs
 
-def _write_and_upload_video(clip, clip_id, source, render_full_obs, fps, gcs_path, video_local_path, clip_local_path):
+def _write_and_upload_video(clip_data, frames, clip_id, source, fps, gcs_path, video_local_path, clip_local_path):
     with open(clip_local_path, 'wb') as f:
-        pickle.dump(clip, f)  # Write clip to disk
-    write_segment_to_video(clip, fname=video_local_path, render_full_obs=render_full_obs, fps=fps)
+        pickle.dump(clip_data, f)  # Write clip to disk
+    write_segment_to_video(frames, fname=video_local_path, fps=fps)
     upload_to_gcs(video_local_path, gcs_path)
     return clip_id, source
 
@@ -77,12 +77,13 @@ class SynthClipManager(object):
 class ClipManager(object):
     """Saves/loads clips from disk, gets new ones from teacher, and syncs everything up with the database"""
 
-    def __init__(self, env, experiment_name, workers=4):
+    def __init__(self, env, env_id, experiment_name, workers=4):
         self.gcs_bucket = os.environ.get('RL_TEACHER_GCS_BUCKET')
         assert self.gcs_bucket, "you must specify a RL_TEACHER_GCS_BUCKET environment variable"
         assert self.gcs_bucket.startswith("gs://"), "env variable RL_TEACHER_GCS_BUCKET must start with gs://"
 
         self.env = env
+        self.env_id = env_id
         self.experiment_name = experiment_name
         self._upload_workers = multiprocessing.Pool(workers)
         self._pending_upload_results = []
@@ -90,7 +91,7 @@ class ClipManager(object):
         self._clips = {}
         # Load clips from database and disk
         from human_feedback_api import Clip
-        for clip in Clip.objects.filter(environment_id=self.env.spec.id):
+        for clip in Clip.objects.filter(environment_id=self.env_id):
             clip_id = clip.clip_tracking_id
             try:
                 self._clips[clip_id] = pickle.load(open(self._pickle_path(clip_id), 'rb'))
@@ -119,17 +120,17 @@ class ClipManager(object):
         if len(self._clips) < 1:
             print("Starting fresh!")
         else:
-            print("Found %s old clips for this environment! (%s sorted)" % (len(self._clips), len(self._sorted_clips)))
+            print("Found %s old clips for this environment! (%s sorted)" % (self.total_number_of_clips, self.number_of_sorted_clips))
 
     def create_new_sort_tree_from_existing_clips(self):
         from human_feedback_api import Clip
         # Assume that the best seed clip is the one with the lowest tracking id
         seed_id = min(self._clips.keys())
-        seed_clip = Clip.objects.get(environment_id=self.env.spec.id, clip_tracking_id=seed_id)
+        seed_clip = Clip.objects.get(environment_id=self.env_id, clip_tracking_id=seed_id)
         self._create_sort_tree(seed_clip)
         for clip_id in self._clips:
             if clip_id != seed_id:
-                clip = Clip.objects.get(environment_id=self.env.spec.id, clip_tracking_id=clip_id)
+                clip = Clip.objects.get(environment_id=self.env_id, clip_tracking_id=clip_id)
                 self._assign_clip_to_sort_tree(clip)
 
     def _create_sort_tree(self, seed_clip):
@@ -152,7 +153,7 @@ class ClipManager(object):
     def _add_to_database(self, clip_id, source=""):
         from human_feedback_api import Clip
         clip = Clip(
-            environment_id=self.env.spec.id,
+            environment_id=self.env_id,
             clip_tracking_id=clip_id,
             media_url=self._gcs_url(clip_id),
             source=source,
@@ -164,14 +165,16 @@ class ClipManager(object):
         clip_id = self._max_clip_id + 1
         self._max_clip_id = clip_id
         self._clips[clip_id] = new_clip
+        # Get the frames
+        frames = [self.env.render_full_obs(x) for x in new_clip["human_obs"]]  # We do this here because render_full_obs is dangerous to pass to a subprocess
         # Write the clip to disk and upload
         if sync:
             uploaded_clip_id, _ = _write_and_upload_video(
-                new_clip, clip_id, source, self.env.render_full_obs, self.env.fps, self._gcs_path(clip_id), self._video_path(clip_id), self._pickle_path(clip_id))
+                new_clip, frames, clip_id, source, self.env.fps, self._gcs_path(clip_id), self._video_path(clip_id), self._pickle_path(clip_id))
             self._add_to_database(uploaded_clip_id, source)
         else:  # async
             self._pending_upload_results.append(self._upload_workers.apply_async(_write_and_upload_video, (
-                new_clip, clip_id, source, self.env.render_full_obs, self.env.fps, self._gcs_path(clip_id), self._video_path(clip_id), self._pickle_path(clip_id))))
+                new_clip, frames, clip_id, source, self.env.fps, self._gcs_path(clip_id), self._video_path(clip_id), self._pickle_path(clip_id))))
         # Avoid memory leaks!
         self._check_pending_uploads()
 
@@ -227,7 +230,7 @@ class ClipManager(object):
         return os.path.join('/tmp/rl_teacher_media', self._video_filename(clip_id))
 
     def _pickle_path(self, clip_id):
-        return os.path.join('clips', '%s-%s.clip' % (self.env.spec.id, clip_id))
+        return os.path.join('clips', '%s-%s.clip' % (self.env_id, clip_id))
 
     def _gcs_path(self, clip_id):
         return os.path.join(self.gcs_bucket, self._video_filename(clip_id))

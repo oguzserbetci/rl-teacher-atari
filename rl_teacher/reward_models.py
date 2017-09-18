@@ -65,22 +65,22 @@ class OrdinalRewardModel(RewardModel):
     """A learned model of an environmental reward using training data that is merely sorted."""
 
     def __init__(self, model_type, env, env_id, make_env, experiment_name, episode_logger, label_schedule, n_pretrain_clips, clip_length, stacked_frames, workers):
-        # TODO It's pretty assinine to pass in env, env_id, and make_env. Cleanup!
+        # TODO It's pretty asinine to pass in env, env_id, and make_env. Cleanup!
         super().__init__(episode_logger)
 
         if model_type == "synth":
             self.clip_manager = SynthClipManager(env, experiment_name)
         elif model_type == "human":
-            self.clip_manager = ClipManager(env, experiment_name, workers)
+            self.clip_manager = ClipManager(env, env_id, experiment_name, workers)
         else:
             raise ValueError("Cannot find clip manager that matches keyword \"%s\"" % model_type)
 
-        if self.clip_manager.total_number_of_clips == 0:
-            # If there are no clips to learn from, generate them!
-            self.generate_pretraining_data(env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers)
-        elif not self.clip_manager._sorted_clips:
+        if self.clip_manager.total_number_of_clips > 0 and not self.clip_manager._sorted_clips:
             # If there are clips but no sort tree, create a sort tree!
             self.clip_manager.create_new_sort_tree_from_existing_clips()
+        if self.clip_manager.total_number_of_clips < n_pretrain_clips:
+            # If there aren't enough clips, generate more!
+            self.generate_pretraining_data(env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers)
 
         self.clip_manager.sort_clips(wait_until_database_fully_sorted=True)
 
@@ -179,17 +179,20 @@ class OrdinalRewardModel(RewardModel):
 
     def generate_pretraining_data(self, env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers):
         print("Starting random rollouts to generate pretraining segments. No learning will take place...")
-        # We need a valid clip for the root node of our search tree.
-        # Null actions are more likely to generate a valid clip than a random clip from random actions.
-        first_clip = basic_segment_from_null_action(env_id, make_env, clip_length, stacked_frames)
+        if self.clip_manager.total_number_of_clips == 0:
+            # We need a valid clip for the root node of our search tree.
+            # Null actions are more likely to generate a valid clip than a random clip from random actions.
+            first_clip = basic_segment_from_null_action(env_id, make_env, clip_length, stacked_frames)
+            # Add the null-action clip first, so the root is valid.
+            self.clip_manager.add(first_clip, source="null-action", sync=True)  # Make synchronous to ensure this is the first clip.
+            # Now add the rest
+
+        desired_clips = n_pretrain_clips - self.clip_manager.total_number_of_clips
 
         random_clips = segments_from_rand_rollout(
-            env_id, make_env, n_desired_segments=n_pretrain_clips - 1,
+            env_id, make_env, n_desired_segments=desired_clips,
             clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
 
-        # Add the null-action clip first, so the root is valid.
-        self.clip_manager.add(first_clip, source="null-action", sync=True)  # Make synchronous to ensure this is the first clip.
-        # Now add the rest
         for clip in random_clips:
             self.clip_manager.add(clip, source="random rollout")
 

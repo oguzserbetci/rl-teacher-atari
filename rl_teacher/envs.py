@@ -216,15 +216,6 @@ class TimeLimitTransparent(TimeLimit, TransparentWrapper):
 def limit(env, t):
     return TimeLimitTransparent(env, max_episode_steps=t)
 
-def get_timesteps_per_episode(env):
-    if hasattr(env, "_max_episode_steps"):
-        return env._max_episode_steps
-    if hasattr(env, "spec"):
-        return env.spec.tags.get("wrapper_config.TimeLimit.max_episode_steps")
-    if hasattr(env, "env"):
-        return get_timesteps_per_episode(env.env)
-    return None
-
 def reacher(short=False):
     from gym.envs import mujoco  # Import here to avoid forcing the user to have MuJoCo to run Teacher
     env = mujoco.ReacherEnv()

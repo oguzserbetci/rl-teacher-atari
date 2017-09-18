@@ -3,7 +3,7 @@ from multiprocessing import Pool
 import numpy as np
 import gym.spaces.prng as space_prng
 
-from rl_teacher.envs import get_timesteps_per_episode
+from rl_teacher.utils import get_timesteps_per_episode
 
 def _slice_path(path, segment_length, start_pos=0):
     return {

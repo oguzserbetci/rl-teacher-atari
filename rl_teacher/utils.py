@@ -2,6 +2,16 @@ import re
 
 import numpy as np
 
+def get_timesteps_per_episode(env):
+    """Returns a best guess as to the maximum number of steps allowed in a given Gym environment"""
+    if hasattr(env, "_max_episode_steps"):
+        return env._max_episode_steps
+    if hasattr(env, "spec"):
+        return env.spec.tags.get("wrapper_config.TimeLimit.max_episode_steps")
+    if hasattr(env, "env"):
+        return get_timesteps_per_episode(env.env)
+    return None
+
 def slugify(value):
     """
     Normalizes string, converts to lowercase, removes non-alpha characters,
