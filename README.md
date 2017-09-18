@@ -11,10 +11,12 @@ As-is, `rl-teacher` only handles MuJoCo environments. This repository is meant t
 - Extended `parallel_trpo` to theoretically be able to handle environments with discrete action spaces
 - Added save/load checkpoint functionality to reward models (and `GA3C`+database)
 - Made `human-feedback-api` much more efficient by having humans sort clips into a red-black tree instead of doing blind comparisons
-- Added a visualization of the sorting tree for an experiment
+- Added a visualization of the sorting tree
 - Simplified reward models by having the model minimize squared error between predicted reward and a real-number reward based on the ordering of clips in the tree
 - Added support for frame-stacking
 - Other miscellaneous improvements like removing the multiprocess dependency from `parallel-trpo` and adding the ability to define custom start-points in an Atari environment
+
+![Red-Black Tree](https://i.imgur.com/AfFBxpy.png)
 
 # Installation
 
@@ -68,4 +70,5 @@ Also worth noting, there's a parameter called `--stacked_frames` (`-f`) that def
 - [ ] Get all agents saving/loading cleanly
 - [ ] Make the reward model select the right neural net based on the shape of the environment's observation space, rather than action space
 - [ ] envs.py is still pretty gnarly; needs refactoring
+- [ ] The red-black tree used for sorting is set up to allow pre-sorting, where a clip is assigned to a non-root node when created. Implement this!
 - [ ] Get play.py into a better state
