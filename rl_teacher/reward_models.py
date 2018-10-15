@@ -126,6 +126,7 @@ class OrdinalRewardModel(RewardModel):
             segment_act = tf.one_hot(tf.cast(self.act_placeholder, tf.int32), self.act_shape[0])
             # HACK Use a convolutional network for Atari
             # TODO Should check the input space dimensions, not the output space!
+            # TODO Use a bayesian network.
             net = SimpleConvolveObservationQNet(self.obs_shape, self.act_shape)
         else:
             self.act_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None) + self.act_shape, name="act_placeholder")
