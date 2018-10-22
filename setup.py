@@ -11,7 +11,7 @@ setup(
     version='0.0.1',
     install_requires=[
         'mujoco-py ~=0.5.7',
-        'gym[mujoco]',
+        'gym[mujoco,atari]== 0.9.0',
         'mujoco-py',
         'tqdm',
         'matplotlib',
