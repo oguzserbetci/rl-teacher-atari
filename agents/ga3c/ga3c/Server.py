@@ -105,7 +105,7 @@ class Server:
         self.model.save(self.stats.episode_count.value)
 
     def main(self):
-        gym.undo_logger_setup()
+        # gym.undo_logger_setup()
 
         self.stats.start()
         self.dynamic_adjustment.start()
