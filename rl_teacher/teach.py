@@ -17,7 +17,7 @@ from rl_teacher.utils import get_timesteps_per_episode
 def main():
     # Tensorflow is not fork-safe, so we must use spawn instead
     # https://github.com/tensorflow/tensorflow/issues/5448#issuecomment-258934405
-    # multiprocessing.set_start_method('spawn')
+    multiprocessing.set_start_method('spawn')
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-e', '--env_id', required=True)
