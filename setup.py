@@ -10,8 +10,8 @@ setup(
     name='rl_teacher',
     version='0.0.1',
     install_requires=[
-        'mujoco-py ~=0.5.7',
-        'gym[mujoco,atari]== 0.9.0',
+        'mujoco-py == 0.5.7',
+        'gym[mujoco,atari] == 0.9.1',
         'mujoco-py',
         'tqdm',
         'matplotlib',
