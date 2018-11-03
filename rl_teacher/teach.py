@@ -13,6 +13,7 @@ from rl_teacher.video import SegmentVideoRecorder
 from rl_teacher.episode_logger import EpisodeLogger
 from rl_teacher.utils import slugify
 from rl_teacher.utils import get_timesteps_per_episode
+from rl_teacher.selector import ClipSelector
 
 def main():
     # Tensorflow is not fork-safe, so we must use spawn instead
@@ -34,6 +35,7 @@ def main():
     parser.add_argument('-c', '--clip_length', default=1.5, type=float)
     parser.add_argument('-f', '--stacked_frames', default=4, type=int)
     parser.add_argument('-V', '--no_videos', action="store_true")
+    parser.add_argument('-S', '--select', action="store_true")
     parser.add_argument('--force_new_environment_clips', action="store_true")
     parser.add_argument('--force_new_training_labels', action="store_true")
     parser.add_argument('--force_new_reward_model', action="store_true")
@@ -94,6 +96,7 @@ def main():
         reward_model = OriginalEnvironmentReward(episode_logger)
         args.pretrain_iters = 0  # Don't bother pre-training a traditional RL agent
     else:
+        # This is where the human feedback is gathered, only at beginning.
         reward_model = OrdinalRewardModel(
             args.reward_model, env, env_id, make_env, experiment_name, episode_logger, schedule,
             n_pretrain_labels, args.clip_length, args.stacked_frames, args.workers)
@@ -108,7 +111,10 @@ def main():
     if not args.no_videos:
         video_path = os.path.join('/tmp/rl_teacher_vids', run_name)
         checkpoint_interval = 20 if args.agent == "ga3c" else 200
-        reward_model = SegmentVideoRecorder(reward_model, env, save_dir=video_path, checkpoint_interval=checkpoint_interval)
+        if args.select:
+            reward_model = ClipSelector(reward_model, env_id, make_env, video_path, checkpoint_interval)
+        else:
+            reward_model = SegmentVideoRecorder(reward_model, env, save_dir=video_path, checkpoint_interval=checkpoint_interval)
 
     print("Starting joint training of reward model and agent")
     if args.agent == "ga3c":

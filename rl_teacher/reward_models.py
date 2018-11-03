@@ -86,7 +86,7 @@ class OrdinalRewardModel(RewardModel):
 
         self.label_schedule = label_schedule
         self.experiment_name = experiment_name
-        self._frames_per_segment = clip_length * env.fps
+        self._frames_per_segment = int(clip_length * env.fps)
         # The reward distribution has standard dev such that each frame of a clip has expected reward 1
         self._standard_deviation = self._frames_per_segment
         self._elapsed_training_iters = 0
@@ -160,15 +160,16 @@ class OrdinalRewardModel(RewardModel):
             })
         return predicted_rewards[0]  # The zero here is to get the single returned path.
 
+    # where the magic happens
     def path_callback(self, path):
         super().path_callback(path)
         self._episode_count += 1
 
         # We may be in a new part of the environment, so we take a clip to learn from if requested
-        if self.clip_manager.total_number_of_clips < self.label_schedule.n_desired_labels:
-            new_clip = sample_segment_from_path(path, int(self._frames_per_segment))
-            if new_clip:
-                self.clip_manager.add(new_clip, source="on-policy callback")
+        # if self.clip_manager.total_number_of_clips < self.label_schedule.n_desired_labels:
+        #     new_clip = sample_segment_from_path(path, int(self._frames_per_segment))
+        #     if new_clip:
+        #         self.clip_manager.add(new_clip, source="on-policy callback")
 
         # Train our model every X episodes
         if self._episode_count % self._episodes_per_training == 0:
@@ -190,6 +191,7 @@ class OrdinalRewardModel(RewardModel):
 
         desired_clips = n_pretrain_clips - self.clip_manager.total_number_of_clips
 
+        # TODO sampling random rollouts
         random_clips = segments_from_rand_rollout(
             env_id, make_env, n_desired_segments=desired_clips,
             clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
