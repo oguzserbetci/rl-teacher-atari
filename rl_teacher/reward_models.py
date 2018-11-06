@@ -10,7 +10,7 @@ from keras import backend as K
 from scipy import stats
 
 from rl_teacher.clip_manager import SynthClipManager, ClipManager
-from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet
+from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet, BayesianModel
 from rl_teacher.segment_sampling import segments_from_rand_rollout, sample_segment_from_path, basic_segment_from_null_action
 from rl_teacher.utils import corrcoef
 
@@ -133,7 +133,8 @@ class OrdinalRewardModel(RewardModel):
             # Assume the actions are how we want them
             segment_act = self.act_placeholder
             # In simple environments, default to a basic Multi-layer Perceptron (see TODO above)
-            net = FullyConnectedMLP(self.obs_shape, self.act_shape)
+            # net = FullyConnectedMLP(self.obs_shape, self.act_shape)
+            net = BayesianModel(self.obs_shape, self.act_shape)
 
         # Our neural network maps a (state, action) pair to a reward
         self.rewards = nn_predict_rewards(self.obs_placeholder, segment_act, net, self.obs_shape, self.act_shape)
