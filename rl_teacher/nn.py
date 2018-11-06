@@ -132,10 +132,8 @@ class BayesianModel(object):
         variance_pre = Dense(1)(reward)
         variance = Activation('softplus', name='variance')(variance_pre)
 
-        # self.model = Model(
-        #     inputs=inpt, outputs=[variance, reward])
         self.model = Model(
-            inputs=inpt, outputs=reward)
+            inputs=inpt, outputs=[variance, reward])
 
     def run(self, obs, act):
         flat_obs = tf.contrib.layers.flatten(obs)

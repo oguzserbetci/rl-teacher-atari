@@ -53,6 +53,7 @@ def train_parallel_trpo(
     iteration = 0
     start_time = time()
 
+    # Train agent
     while run_indefinitely or time() < start_time + runtime:
         iteration += 1
 

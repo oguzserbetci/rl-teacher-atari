@@ -24,7 +24,8 @@ class VarianceSelector(object):
 
     def select(self, segments):
         print("Selector.select()")
-        sort = np.argsort([segment['variance'] for segment in segments])
+        variances = [segment['variance'] for segment in segments]
+        sort = np.argsort(variances)
         return [segments[sort[-1]]], 0
 
 class ClipSelector(object):
@@ -32,7 +33,7 @@ class ClipSelector(object):
 
     def __init__(self, model, env_id, make_env, save_dir, paths_per_selection=500):
         self.model = model
-        self.selector = MinMaxSelector()
+        self.selector = VarianceSelector()
         self.env_id = env_id
         self.make_env = make_env
         self.save_dir = save_dir
