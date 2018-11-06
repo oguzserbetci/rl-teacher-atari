@@ -128,17 +128,14 @@ class BayesianModel(object):
         x = LeakyReLU()(x)
         x = Dropout(0.5)(x)
 
-        logits = Dense(1)(x)
-        variance_pre = Dense(1)(logits)
+        reward = Dense(1)(x)
+        variance_pre = Dense(1)(reward)
         variance = Activation('softplus', name='variance')(variance_pre)
 
-        logits_variance = concatenate([logits, variance],
-                                      name='logits_variance')
-        softmax_output = Activation('softmax', name='softmax_output')(logits)
         # self.model = Model(
-        #     inputs=inpt, outputs=[logits_variance, softmax_output])
+        #     inputs=inpt, outputs=[variance, reward])
         self.model = Model(
-            inputs=inpt, outputs=softmax_output)
+            inputs=inpt, outputs=reward)
 
     def run(self, obs, act):
         flat_obs = tf.contrib.layers.flatten(obs)

@@ -176,6 +176,7 @@ class ParallelRollout(object):
             ################################
             path["original_rewards"] = path["rewards"]
             path["rewards"] = self.predictor.predict_reward(path)
+            # path["variances"] = self.predictor.predict_reward(path)
             self.predictor.path_callback(path)
             ################################
             #   END REWARD MODIFICATIONS   #

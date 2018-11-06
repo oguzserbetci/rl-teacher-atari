@@ -18,6 +18,15 @@ class MinMaxSelector(object):
         sort = np.argsort([sum(segment['rewards']) for segment in segments])
         return [segments[sort[0]], segments[sort[-1]]], 0
 
+class VarianceSelector(object):
+    def __init__(self):
+        print("Selector initialized")
+
+    def select(self, segments):
+        print("Selector.select()")
+        sort = np.argsort([segment['variance'] for segment in segments])
+        return [segments[sort[-1]]], 0
+
 class ClipSelector(object):
     """ Wraps a reward model's path_callback to sample, select and record segments for human to annotate. """
 

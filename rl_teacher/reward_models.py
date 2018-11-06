@@ -133,15 +133,17 @@ class OrdinalRewardModel(RewardModel):
             # Assume the actions are how we want them
             segment_act = self.act_placeholder
             # In simple environments, default to a basic Multi-layer Perceptron (see TODO above)
-            # net = FullyConnectedMLP(self.obs_shape, self.act_shape)
-            net = BayesianModel(self.obs_shape, self.act_shape)
+            net = FullyConnectedMLP(self.obs_shape, self.act_shape)
+            # net = BayesianModel(self.obs_shape, self.act_shape)
 
         # Our neural network maps a (state, action) pair to a reward
+        # self.variance, self.rewards = nn_predict_rewards(self.obs_placeholder, segment_act, net, self.obs_shape, self.act_shape)
         self.rewards = nn_predict_rewards(self.obs_placeholder, segment_act, net, self.obs_shape, self.act_shape)
 
         # We use trajectory segments rather than individual (state, action) pairs because
         # video clips of segments are easier for humans to evaluate
         self.segment_rewards = tf.reduce_sum(self.rewards, axis=1)
+        # self.segment_variance = tf.reduce_sum(self.variance, axis=1)
 
         self.targets = tf.placeholder(dtype=tf.float32, shape=(None,), name="reward_targets")
 
@@ -154,11 +156,17 @@ class OrdinalRewardModel(RewardModel):
     def predict_reward(self, path):
         """Predict the reward for each step in a given path"""
         with self.graph.as_default():
+            # variance, predicted_rewards = self.sess.run([self.variance, self.rewards], feed_dict={
+            #     self.obs_placeholder: np.asarray([path["obs"]]),
+            #     self.act_placeholder: np.asarray([path["actions"]]),
+            #     K.learning_phase(): False
+            # })
             predicted_rewards = self.sess.run(self.rewards, feed_dict={
                 self.obs_placeholder: np.asarray([path["obs"]]),
                 self.act_placeholder: np.asarray([path["actions"]]),
                 K.learning_phase(): False
             })
+        # return variance[0], predicted_rewards[0]  # The zero here is to get the single returned path.
         return predicted_rewards[0]  # The zero here is to get the single returned path.
 
     # where the magic happens
