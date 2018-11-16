@@ -40,24 +40,28 @@ class BayesianNN(object):
         x = tf.concat([flat_obs, acts], axis=1)
 
         # forward
-        ly_x = tf.expand_dims(
-            tf.tile(tf.expand_dims(x, 0), [self.n_particles, 1, 1]), 3)
+        # replicate input to sample many networks
+        ly_x = tf.expand_dims(tf.tile(tf.expand_dims(x, 0), [self.n_particles, 1, 1]), 3)
         for i in range(len(self.ws)):
+            # tile weights per batch and frame
             w = tf.tile(self.ws[i], [1, tf.shape(x)[0], 1, 1])
             ly_x = tf.concat([ly_x, tf.ones([self.n_particles, tf.shape(x)[0], 1, 1])], 2)
+            # forward pass
             ly_x = tf.matmul(w, ly_x) / tf.sqrt(tf.to_float(tf.shape(ly_x)[2]))
+            # add relu activation if not last layer
             if i < len(self.ws) - 1:
                 ly_x = tf.nn.relu(ly_x)
 
         # y_mean = fNN(x, W)
         reward_mean = tf.squeeze(ly_x, [2, 3])
 
+        # reshape rewards to sum up segments
         segment_rewards = tf.reshape(reward_mean, (-1, self.batchsize, self.segment_length))
         segment_rewards = tf.reduce_sum(segment_rewards, axis=2)
 
+        # y ~ N(y|y_mean, y_logstd)  : noise is added to the output to get a tractable likelihood
         segment_logstd = tf.get_variable('segment_logstd', shape=[],
                                          initializer=tf.constant_initializer(0.))
-        # y ~ N(y|y_mean, y_logstd)  : noise is added to the output to get a tractable likelihood
         _ = zs.Normal('segment_rewards', segment_rewards, logstd=segment_logstd)
 
         return reward_mean, segment_rewards
@@ -75,25 +79,28 @@ def bayesianNN(observed, x, n_x, layer_sizes, n_particles, batchsize, segment_le
                           n_samples=n_particles, group_ndims=2))
 
         # forward
-        ly_x = tf.expand_dims(
-            tf.tile(tf.expand_dims(x, 0), [n_particles, 1, 1]), 3)
+        # replicate input to sample many networks
+        ly_x = tf.expand_dims(tf.tile(tf.expand_dims(x, 0), [n_particles, 1, 1]), 3)
         for i in range(len(ws)):
+            # tile weights per batch and frame
             w = tf.tile(ws[i], [1, tf.shape(x)[0], 1, 1])
-            ly_x = tf.concat(
-                [ly_x, tf.ones([n_particles, tf.shape(x)[0], 1, 1])], 2)
+            ly_x = tf.concat([ly_x, tf.ones([n_particles, tf.shape(x)[0], 1, 1])], 2)
+            # forward pass
             ly_x = tf.matmul(w, ly_x) / tf.sqrt(tf.to_float(tf.shape(ly_x)[2]))
+            # add relu activation if not last layer
             if i < len(ws) - 1:
                 ly_x = tf.nn.relu(ly_x)
 
         # y_mean = fNN(x, W)
         reward_mean = tf.squeeze(ly_x, [2, 3])
 
+        # reshape rewards to sum up segments
         segment_rewards = tf.reshape(reward_mean, (-1, batchsize, segment_length))
         segment_rewards = tf.reduce_sum(segment_rewards, axis=2)
 
+        # y ~ N(y|y_mean, y_logstd)  : noise is added to the output to get a tractable likelihood
         segment_logstd = tf.get_variable('segment_logstd', shape=[],
                                    initializer=tf.constant_initializer(0.))
-        # y ~ N(y|y_mean, y_logstd)  : noise is added to the output to get a tractable likelihood
         _ = zs.Normal('segment_rewards', segment_rewards, logstd=segment_logstd)
 
     return model, reward_mean, None, segment_rewards
