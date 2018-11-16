@@ -45,6 +45,7 @@ class BayesianNN(object):
         for i in range(len(self.ws)):
             # tile weights per batch and frame
             w = tf.tile(self.ws[i], [1, tf.shape(x)[0], 1, 1])
+            # add bias
             ly_x = tf.concat([ly_x, tf.ones([self.n_particles, tf.shape(x)[0], 1, 1])], 2)
             # forward pass
             ly_x = tf.matmul(w, ly_x) / tf.sqrt(tf.to_float(tf.shape(ly_x)[2]))
@@ -84,6 +85,7 @@ def bayesianNN(observed, x, n_x, layer_sizes, n_particles, batchsize, segment_le
         for i in range(len(ws)):
             # tile weights per batch and frame
             w = tf.tile(ws[i], [1, tf.shape(x)[0], 1, 1])
+            # add bias
             ly_x = tf.concat([ly_x, tf.ones([n_particles, tf.shape(x)[0], 1, 1])], 2)
             # forward pass
             ly_x = tf.matmul(w, ly_x) / tf.sqrt(tf.to_float(tf.shape(ly_x)[2]))
