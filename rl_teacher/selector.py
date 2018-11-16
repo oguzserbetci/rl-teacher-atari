@@ -28,6 +28,8 @@ class VarianceSelector(object):
         sort = np.argsort(variances)
         return [segments[sort[-1]]], 0
 
+
+
 class ClipSelector(object):
     """ Wraps a reward model's path_callback to sample, select and record segments for human to annotate. """
 
@@ -50,7 +52,7 @@ class ClipSelector(object):
 
     def path_callback(self, path):
         # Video recording to elicit human feedback every x steps.
-        if (self._num_paths_seen % self.paths_per_wait <= self.paths_per_selection):
+        if (self._num_paths_seen % self.paths_per_wait <= self.paths_per_selection) and (self.clip_manager.total_number_of_clips < self.label_schedule.n_desired_labels):
             if (len(self.collected_paths) < self.paths_per_selection):
                 self.collected_paths.append(path)
             elif (len(self.collected_paths) == self.paths_per_selection):

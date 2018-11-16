@@ -35,7 +35,7 @@ def main():
     parser.add_argument('-c', '--clip_length', default=1.5, type=float)
     parser.add_argument('-f', '--stacked_frames', default=4, type=int)
     parser.add_argument('-V', '--no_videos', action="store_true")
-    parser.add_argument('-S', '--select', action="store_true")
+    parser.add_argument('-S', '--select', default=False, action="store_true")
     parser.add_argument('--force_new_environment_clips', action="store_true")
     parser.add_argument('--force_new_training_labels', action="store_true")
     parser.add_argument('--force_new_reward_model', action="store_true")
@@ -112,6 +112,7 @@ def main():
         video_path = os.path.join('/tmp/rl_teacher_vids', run_name)
         checkpoint_interval = 20 if args.agent == "ga3c" else 200
         if args.select:
+            print("USING SELECTOR!!!!!")
             reward_model = ClipSelector(reward_model, env_id, make_env, video_path, checkpoint_interval)
         else:
             reward_model = SegmentVideoRecorder(reward_model, env, save_dir=video_path, checkpoint_interval=checkpoint_interval)

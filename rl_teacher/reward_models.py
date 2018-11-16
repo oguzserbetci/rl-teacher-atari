@@ -6,6 +6,7 @@ from multiprocessing import Process
 
 import numpy as np
 import tensorflow as tf
+import zhusuan as zs
 from keras import backend as K
 from scipy import stats
 
@@ -13,6 +14,7 @@ from rl_teacher.clip_manager import SynthClipManager, ClipManager
 from rl_teacher.nn import FullyConnectedMLP, SimpleConvolveObservationQNet, BayesianModel
 from rl_teacher.segment_sampling import segments_from_rand_rollout, sample_segment_from_path, basic_segment_from_null_action
 from rl_teacher.utils import corrcoef
+from rl_teacher.bnn import bayesianNN, mean_field_variational
 
 def nn_predict_rewards(obs_segments, act_segments, network, obs_shape, act_shape):
     """
@@ -82,12 +84,14 @@ class OrdinalRewardModel(RewardModel):
             # If there aren't enough clips, generate more!
             self.generate_pretraining_data(env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers)
 
+        print('clip length', clip_length)
         self.clip_manager.sort_clips(wait_until_database_fully_sorted=True)
 
         self.label_schedule = label_schedule
         self.experiment_name = experiment_name
         self._frames_per_segment = int(clip_length * env.fps)
         # The reward distribution has standard dev such that each frame of a clip has expected reward 1
+        # TODO Use this in BNN
         self._standard_deviation = self._frames_per_segment
         self._elapsed_training_iters = 0
         self._episode_count = 0
@@ -126,46 +130,78 @@ class OrdinalRewardModel(RewardModel):
             segment_act = tf.one_hot(tf.cast(self.act_placeholder, tf.int32), self.act_shape[0])
             # HACK Use a convolutional network for Atari
             # TODO Should check the input space dimensions, not the output space!
-            # TODO Use a bayesian network.
             net = SimpleConvolveObservationQNet(self.obs_shape, self.act_shape)
         else:
             self.act_placeholder = tf.placeholder(dtype=tf.float32, shape=(None, None) + self.act_shape, name="act_placeholder")
             # Assume the actions are how we want them
-            segment_act = self.act_placeholder
-            # In simple environments, default to a basic Multi-layer Perceptron (see TODO above)
-            # net = FullyConnectedMLP(self.obs_shape, self.act_shape)
-            net = BayesianModel(self.obs_shape, self.act_shape)
 
-        # Our neural network maps a (state, action) pair to a reward
-        self.variance, self.rewards = nn_predict_rewards(self.obs_placeholder, segment_act, net, self.obs_shape, self.act_shape)
-        # self.rewards = nn_predict_rewards(self.obs_placeholder, segment_act, net, self.obs_shape, self.act_shape)
+        segment_act = self.act_placeholder
+        batchsize = tf.shape(self.obs_placeholder)[0]
+        self.batchsize = batchsize
+        segment_length = tf.shape(self.obs_placeholder)[1]
+        self.segmentlength = segment_length
+
+        obs = tf.reshape(self.obs_placeholder, (-1, ) + self.obs_shape)
+        act = tf.reshape(segment_act, (-1, ) + self.act_shape)
+
+        flat_obs = tf.contrib.layers.flatten(obs)
+        x = tf.concat([flat_obs, act], axis=1)
+
+        self.n_particles = tf.placeholder(tf.int32, shape=[], name='n_particles')
+        input_size = np.prod(self.obs_shape) + np.prod(self.act_shape)
+        layer_sizes = [input_size] + [64, 64] + [1]
+        w_names = ['w' + str(i) for i in range(len(layer_sizes) - 1)]
+
+        self.targets = tf.placeholder(
+            dtype=tf.float32, shape=(None, ), name="reward_targets")
+
+        def log_joint(observed):
+            model, _, _, _ = bayesianNN(observed, x, input_size, layer_sizes, self.n_particles, batchsize, segment_length)
+            log_pws = model.local_log_prob(w_names)
+            log_py_xw = model.local_log_prob('segment_rewards')
+            return tf.add_n(log_pws) + log_py_xw * self.label_schedule.n_desired_labels
+
+        variational = mean_field_variational(layer_sizes, self.n_particles)
+        qw_outputs = variational.query(w_names, outputs=True, local_log_prob=True)
+        latent = dict(zip(w_names, qw_outputs))
+        lower_bound = zs.variational.elbo(log_joint, observed={'segment_rewards': self.targets}, latent=latent, axis=0)
+        cost = tf.reduce_mean(lower_bound.sgvb())
+        lower_bound = tf.reduce_mean(lower_bound)
+        self.loss = lower_bound
+
+        optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
+        infer_op = optimizer.minimize(cost)
+        self.train_op = infer_op
+
+        ###################################
+        # prediction: rmse & log likelihood
+        observed = dict((w_name, latent[w_name][0]) for w_name in w_names)
+        observed.update({'segment_rewards': self.targets})
+        model, reward_mean, reward_logstd, self.segment_rewards = bayesianNN(observed, x, input_size, layer_sizes, self.n_particles, batchsize, segment_length)
+
+        self.reward_mean = reward_mean
+
+        reward_pred, reward_var = tf.nn.moments(reward_mean, 0)
+        self.rewards = tf.reshape(reward_pred, (batchsize, segment_length))
+        self.variances = tf.reshape(reward_var, (batchsize, segment_length))
 
         # We use trajectory segments rather than individual (state, action) pairs because
         # video clips of segments are easier for humans to evaluate
-        self.segment_rewards = tf.reduce_sum(self.rewards, axis=1)
-        self.segment_variance = tf.reduce_sum(self.variance, axis=1)
-
-        self.targets = tf.placeholder(dtype=tf.float32, shape=(None,), name="reward_targets")
-
-        self.loss = tf.reduce_mean(tf.square(self.targets - self.segment_rewards))
-
-        self.train_op = tf.train.AdamOptimizer().minimize(self.loss)
+        self.segment_variance = tf.reduce_sum(self.variances, axis=1)
 
         return tf.get_default_graph()
 
     def predict_reward(self, path):
         """Predict the reward for each step in a given path"""
         with self.graph.as_default():
-            variance, predicted_rewards = self.sess.run([self.variance, self.rewards], feed_dict={
-                self.obs_placeholder: np.asarray([path["obs"]]),
-                self.act_placeholder: np.asarray([path["actions"]]),
-                K.learning_phase(): False
-            })
-            # predicted_rewards = self.sess.run(self.rewards, feed_dict={
-            #     self.obs_placeholder: np.asarray([path["obs"]]),
-            #     self.act_placeholder: np.asarray([path["actions"]]),
-            #     K.learning_phase(): False
-            # })
+            variance, predicted_rewards = self.sess.run(
+                [self.variances, self.rewards],
+                feed_dict={
+                    self.n_particles: 1,
+                    self.obs_placeholder: np.asarray([path["obs"]]),
+                    self.act_placeholder: np.asarray([path["actions"]]),
+                    K.learning_phase(): False
+                })
         return variance[0], predicted_rewards[0]  # The zero here is to get the single returned path.
 
     # where the magic happens
@@ -174,35 +210,46 @@ class OrdinalRewardModel(RewardModel):
         self._episode_count += 1
 
         # We may be in a new part of the environment, so we take a clip to learn from if requested
-        # if self.clip_manager.total_number_of_clips < self.label_schedule.n_desired_labels:
-        #     new_clip = sample_segment_from_path(path, int(self._frames_per_segment))
-        #     if new_clip:
-        #         self.clip_manager.add(new_clip, source="on-policy callback")
+        if self.clip_manager.total_number_of_clips < self.label_schedule.n_desired_labels:
+            new_clip = sample_segment_from_path(path, int(self._frames_per_segment))
+            if new_clip:
+                self.clip_manager.add(new_clip, source="on-policy callback")
 
         # Train our model every X episodes
         if self._episode_count % self._episodes_per_training == 0:
-            self.train(iterations=self._iterations_per_training, report_frequency=25)
+            self.train(
+                iterations=self._iterations_per_training, report_frequency=25)
 
         # Save our model every X steps
         if self._episode_count % self._episodes_per_checkpoint == 0:
             self.save_model_checkpoint()
 
-    def generate_pretraining_data(self, env_id, make_env, n_pretrain_clips, clip_length, stacked_frames, workers):
-        print("Starting random rollouts to generate pretraining segments. No learning will take place...")
+    def generate_pretraining_data(self, env_id, make_env, n_pretrain_clips,
+                                  clip_length, stacked_frames, workers):
+        print(
+            "Starting random rollouts to generate pretraining segments. No learning will take place..."
+        )
         if self.clip_manager.total_number_of_clips == 0:
             # We need a valid clip for the root node of our search tree.
             # Null actions are more likely to generate a valid clip than a random clip from random actions.
-            first_clip = basic_segment_from_null_action(env_id, make_env, clip_length, stacked_frames)
+            first_clip = basic_segment_from_null_action(
+                env_id, make_env, clip_length, stacked_frames)
             # Add the null-action clip first, so the root is valid.
-            self.clip_manager.add(first_clip, source="null-action", sync=True)  # Make synchronous to ensure this is the first clip.
+            self.clip_manager.add(
+                first_clip, source="null-action", sync=True
+            )  # Make synchronous to ensure this is the first clip.
             # Now add the rest
 
         desired_clips = n_pretrain_clips - self.clip_manager.total_number_of_clips
 
         # TODO sampling random rollouts
         random_clips = segments_from_rand_rollout(
-            env_id, make_env, n_desired_segments=desired_clips,
-            clip_length_in_seconds=clip_length, stacked_frames=stacked_frames, workers=workers)
+            env_id,
+            make_env,
+            n_desired_segments=desired_clips,
+            clip_length_in_seconds=clip_length,
+            stacked_frames=stacked_frames,
+            workers=workers)
 
         for clip in random_clips:
             self.clip_manager.add(clip, source="random rollout")
@@ -212,31 +259,49 @@ class OrdinalRewardModel(RewardModel):
         max_ordinal = self.clip_manager.maximum_ordinal  # Equivalent to the size of the sorting tree
         step_size = 1.0 / (max_ordinal + 1)
         offset = step_size / 2
-        targets = [self._standard_deviation * stats.norm.ppf(offset + (step_size * o)) for o in ordinals]
+        targets = [
+            self._standard_deviation * stats.norm.ppf(offset + (step_size * o))
+            for o in ordinals
+        ]
         return targets
 
     def train(self, iterations=1, report_frequency=None):
         self.clip_manager.sort_clips()
         # batch_size = min(128, self.clip_manager.number_of_sorted_clips)
-        _, clips, ordinals = self.clip_manager.get_sorted_clips()  # batch_size=batch_size
+        _, clips, ordinals = self.clip_manager.get_sorted_clips(
+        )  # batch_size=batch_size
 
         obs = [clip['obs'] for clip in clips]
         acts = [clip['actions'] for clip in clips]
         targets = self.calculate_targets(ordinals)
 
         with self.graph.as_default():
+            # reward_mean, segment_rewards = self.sess.run(
+            #     [self.reward_mean, self.segment_rewards],
+            #     feed_dict={
+            #         self.n_particles: 10,
+            #         self.obs_placeholder: np.asarray(obs),
+            #         self.act_placeholder: np.asarray(acts),
+            #         self.targets: np.asarray(targets),
+            #         K.learning_phase(): True
+            #     })
             for i in range(1, iterations + 1):
-                _, loss = self.sess.run([self.train_op, self.loss], feed_dict={
-                    self.obs_placeholder: np.asarray(obs),
-                    self.act_placeholder: np.asarray(acts),
-                    self.targets: np.asarray(targets),
-                    K.learning_phase(): True
-                })
+                _, loss = self.sess.run(
+                    [self.train_op, self.loss],
+                    feed_dict={
+                        self.n_particles: 1,
+                        self.obs_placeholder: np.asarray(obs),
+                        self.act_placeholder: np.asarray(acts),
+                        self.targets: np.asarray(targets),
+                        K.learning_phase(): True
+                    })
                 self._elapsed_training_iters += 1
                 if report_frequency and i % report_frequency == 0:
-                    print("%s/%s reward model training iters. (Err: %s)" % (i, iterations, loss))
+                    print("%s/%s reward model training iters. (Err: %s)" %
+                          (i, iterations, loss))
                 elif iterations == 1:
-                    print("Reward model training iter %s (Err: %s)" % (self._elapsed_training_iters, loss))
+                    print("Reward model training iter %s (Err: %s)" %
+                          (self._elapsed_training_iters, loss))
 
     def _checkpoint_filename(self):
         return 'checkpoints/reward_model/%s/treesave' % (self.experiment_name)
@@ -246,26 +311,38 @@ class OrdinalRewardModel(RewardModel):
         self.saver.save(self.sess, self._checkpoint_filename())
 
     def try_to_load_model_from_checkpoint(self):
-        filename = tf.train.latest_checkpoint(os.path.dirname(self._checkpoint_filename()))
+        filename = tf.train.latest_checkpoint(
+            os.path.dirname(self._checkpoint_filename()))
         if filename is None:
-            print('No reward model checkpoint found on disk for experiment "{}"'.format(self.experiment_name))
+            print(
+                'No reward model checkpoint found on disk for experiment "{}"'.
+                format(self.experiment_name))
         else:
             self.saver.restore(self.sess, filename)
             print("Reward model loaded from checkpoint!")
             # Dump model outputs with errors
             if True:  # <-- Toggle testing with this
                 with self.graph.as_default():
-                    clip_ids, clips, ordinals = self.clip_manager.get_sorted_clips()
+                    clip_ids, clips, ordinals = self.clip_manager.get_sorted_clips(
+                    )
                     targets = self.calculate_targets(ordinals)
                     for i in range(len(clips)):
-                        predicted_rewards = self.sess.run(self.rewards, feed_dict={
-                            self.obs_placeholder: np.asarray([clips[i]["obs"]]),
-                            self.act_placeholder: np.asarray([clips[i]["actions"]]),
-                            K.learning_phase(): False
-                        })[0]
+                        predicted_rewards = self.sess.run(
+                            self.rewards,
+                            feed_dict={
+                                self.n_particles: 1,
+                                self.obs_placeholder:
+                                np.asarray([clips[i]["obs"]]),
+                                self.act_placeholder:
+                                np.asarray([clips[i]["actions"]]),
+                                K.learning_phase():
+                                False
+                            })[0]
                         reward_sum = sum(predicted_rewards)
                         starting_reward = predicted_rewards[0]
                         ending_reward = predicted_rewards[-1]
                         print(
                             "Clip {: 3d}: predicted = {: 5.2f} | target = {: 5.2f} | error = {: 5.2f}"  # | start = {: 5.2f} | end = {: 5.2f}"
-                            .format(clip_ids[i], reward_sum, targets[i], reward_sum - targets[i]))  # , starting_reward, ending_reward))
+                            .format(clip_ids[i], reward_sum, targets[i],
+                                    reward_sum - targets[i]
+                                    ))  # , starting_reward, ending_reward))

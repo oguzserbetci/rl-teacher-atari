@@ -54,6 +54,7 @@ class SegmentVideoRecorder(object):
         self._num_paths_seen = 0  # Internal counter of how many paths we've seen
 
     def path_callback(self, path):
+        # Video recording to elicit human feedback every x steps.
         if self._num_paths_seen % self.checkpoint_interval == 0:  # and self._num_paths_seen != 0:
             fname = '%s/run_%s.mp4' % (self.save_dir, self._num_paths_seen)
             print("Saving video of run %s to %s" % (self._num_paths_seen, fname))

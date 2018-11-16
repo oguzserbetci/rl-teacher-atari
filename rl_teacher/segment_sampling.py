@@ -6,11 +6,13 @@ import gym.spaces.prng as space_prng
 from rl_teacher.utils import get_timesteps_per_episode
 
 def _slice_path(path, segment_length, start_pos=0):
+    # TODO return var
     return {
         k: np.asarray(v[start_pos:(start_pos + segment_length)])
         for k, v in path.items()
         if k in ['obs', "actions", 'original_rewards', 'human_obs']}
 
+# randomly get a clip from a trajectory
 def sample_segment_from_path(path, segment_length):
     """Returns a segment sampled from a random place in a path. Returns None if the path is too short"""
     path_length = len(path["obs"])
